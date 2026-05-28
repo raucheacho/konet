@@ -1,0 +1,63 @@
+# Channels
+
+Channels are the core pub/sub primitive in Konet.
+
+## Topic Pattern
+
+```
+room:<identifier>
+```
+
+Examples:
+
+- `room:lobby`
+- `room:project:42`
+- `room:user:123:inbox`
+
+## Lifecycle
+
+### Join
+
+```js
+const channel = client.channel('room:lobby')
+await channel.subscribe()
+```
+
+The server replies with `ok` or `error`. On join, presence is automatically tracked.
+
+### Broadcast
+
+```js
+channel.send('message', { text: 'Hello!' })
+```
+
+Server handler:
+
+```elixir
+def handle_in("broadcast", %{"event" => event, "payload" => payload}, socket) do
+  broadcast!(socket, event, payload)
+  {:noreply, socket}
+end
+```
+
+### Listen
+
+```js
+channel.on('message', (payload) => {
+  console.log(payload)
+})
+```
+
+### Leave
+
+```js
+channel.unsubscribe()
+```
+
+## Rate Limiting
+
+Each socket is allowed up to `KONET_RATE_LIMIT` messages per second. Exceeding the limit returns:
+
+```json
+{ "status": "error", "response": { "reason": "rate_limited" } }
+```

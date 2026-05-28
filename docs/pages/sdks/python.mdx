@@ -1,0 +1,59 @@
+# Python SDK
+
+Async-first client for Python 3.10+.
+
+## Installation
+
+```bash
+pip install konet-py
+```
+
+## Quick Start
+
+```python
+import asyncio
+from konet import KonetClient
+
+async def main():
+    client = KonetClient('ws://localhost:4000/socket', token='kt_anon_your_key')
+    await client.connect()
+
+    channel = client.channel('room:lobby')
+    await channel.subscribe()
+
+    def on_message(payload):
+        print('Received:', payload)
+
+    channel.on('message', on_message)
+    await channel.send('message', {'text': 'Hello from Python!'})
+
+    await asyncio.Event().wait()
+
+asyncio.run(main())
+```
+
+## API
+
+```python
+client = KonetClient(url, token, timeout=10, heartbeat=30)
+await client.connect()
+await client.close()
+
+channel = client.channel('room:lobby')
+await channel.subscribe()
+channel.on(event, callback)
+await channel.send(event, payload)
+await channel.unsubscribe()
+
+# Presence
+presence = channel.presence
+presence.list()
+presence.on_sync(callback)
+```
+
+## Testing
+
+```bash
+pip install pytest pytest-asyncio
+pytest
+```

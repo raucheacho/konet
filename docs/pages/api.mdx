@@ -1,0 +1,43 @@
+# API Reference
+
+Konet exposes a WebSocket API built on Phoenix Channels.
+
+## Endpoints
+
+| Protocol | URL | Purpose |
+|----------|-----|---------|
+| WebSocket | `ws://host:4000/socket` | Channel transport |
+| HTTP | `http://host:4000/api/health` | Health check |
+| HTTP | `http://host:4000/api/keys` | Key management (service only) |
+
+## Message Format
+
+All channel messages use JSON:
+
+```json
+{
+  "event": "broadcast",
+  "payload": { "text": "hi" },
+  "ref": "1"
+}
+```
+
+## Topics
+
+Topics follow the pattern `room:<id>`. You can join any room dynamically; no pre-registration is required.
+
+## Authentication
+
+Pass a JWT as a connection parameter:
+
+```json
+{ "token": "<jwt>" }
+```
+
+Tokens must be signed with `KONET_JWT_SECRET`.
+
+## Topics
+
+- [Authentication](/api/authentication) — JWT claims and key types
+- [Channels](/api/channels) — join, broadcast, and leave semantics
+- [Presence](/api/presence) — tracking and metadata

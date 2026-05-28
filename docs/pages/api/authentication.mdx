@@ -1,0 +1,47 @@
+# Authentication
+
+Konet uses JWT tokens for all client connections. Tokens are validated with the `KONET_JWT_SECRET` environment variable.
+
+## Token Types
+
+### Anonymous Key (`kt_anon_*`)
+
+- Generated automatically on `konet init`
+- Grants standard channel join and broadcast rights
+- Safe to embed in client-side code
+
+### Service Key (`kt_service_*`)
+
+- Grants admin-level access
+- Required for Studio and key-rotation endpoints
+- **Never expose in client bundles**
+
+## JWT Claims
+
+| Claim | Required | Description |
+|-------|----------|-------------|
+| `sub` | Yes | User ID |
+| `role` | No | `anon` or `service` |
+| `exp` | Recommended | Expiration timestamp |
+
+## Example Token (Node.js)
+
+```js
+import jwt from 'jsonwebtoken'
+
+const token = jwt.sign(
+  { sub: 'user_123', role: 'anon' },
+  process.env.KONET_JWT_SECRET,
+  { expiresIn: '1h' }
+)
+```
+
+## Connection
+
+Pass the token when opening the socket:
+
+```js
+const client = createClient('ws://localhost:4000/socket', { token })
+```
+
+On the server, `socket.assigns.user_id` and `socket.assigns.role` are populated from validated claims.

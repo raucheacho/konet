@@ -1,0 +1,66 @@
+# Configuration
+
+Konet is configured through environment variables and an optional `konet.toml` file.
+
+## Environment Variables
+
+### Core
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `MIX_ENV` | No | `prod` | Elixir environment |
+| `PHX_SERVER` | No | `true` | Start the web server |
+| `KONET_HOST` | No | `0.0.0.0` | Network interface to bind |
+| `KONET_PORT` | No | `4000` | HTTP port inside the container |
+| `SECRET_KEY_BASE` | **Yes** | — | 64-byte Phoenix secret |
+
+### Security
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `KONET_JWT_SECRET` | **Yes** | HMAC secret for JWT tokens |
+| `KONET_ANON_KEY` | No | Pre-generated anonymous token |
+| `KONET_SERVICE_KEY` | No | Pre-generated service/admin token |
+
+### Rate Limiting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KONET_RATE_LIMIT` | `10` | Max messages per second per socket |
+
+## konet.toml
+
+The CLI generates this file on `konet init`:
+
+```toml
+[server]
+host = "0.0.0.0"
+port = 4000
+
+[security]
+jwt_secret = "auto-generated"
+anon_key = "kt_anon_..."
+service_key = "kt_service_..."
+
+[limits]
+max_messages_per_second = 10
+max_presence_payload_kb = 16
+```
+
+## Generating Secrets
+
+```bash
+# Phoenix secret_key_base
+openssl rand -base64 48
+
+# JWT secret
+openssl rand -hex 32
+```
+
+## Production Checklist
+
+- [ ] Set strong `SECRET_KEY_BASE` and `KONET_JWT_SECRET`
+- [ ] Rotate `KONET_ANON_KEY` and `KONET_SERVICE_KEY` regularly
+- [ ] Run behind a reverse proxy (Nginx, Traefik, Caddy)
+- [ ] Enable TLS termination at the proxy
+- [ ] Restrict `KONET_HOST` to `127.0.0.1` if using a sidecar proxy
