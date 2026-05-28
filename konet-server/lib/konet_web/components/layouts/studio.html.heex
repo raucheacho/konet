@@ -1,0 +1,57 @@
+<div class="studio-shell">
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-text">Konet</span>
+      <span class="logo-badge">Studio</span>
+    </div>
+
+    <div class="nav-links" id="studio-nav">
+      <a href="/studio/overview" data-path="/studio/overview">
+        <span class="nav-icon">◈</span> Overview
+      </a>
+      <a href="/studio/channels" data-path="/studio/channels">
+        <span class="nav-icon">⊕</span> Channels
+      </a>
+      <a href="/studio/presence" data-path="/studio/presence">
+        <span class="nav-icon">◉</span> Presence
+      </a>
+      <a href="/studio/logs" data-path="/studio/logs">
+        <span class="nav-icon">▤</span> Logs
+      </a>
+      <a href="/studio/broadcast" data-path="/studio/broadcast">
+        <span class="nav-icon">↗</span> Broadcast
+      </a>
+      <a href="/studio/keys" data-path="/studio/keys">
+        <span class="nav-icon">⚿</span> Keys
+      </a>
+    </div>
+
+    <div class="sidebar-footer">
+      <a href="/api/health" target="_blank" class="status-link">
+        <span class="status-dot"></span>
+        <span class="mono">v0.1.0</span>
+      </a>
+    </div>
+  </nav>
+
+  <main class="studio-content">
+    <p :if={msg = Phoenix.Flash.get(@flash, :info)} role="alert" class="flash flash-info"><%= msg %></p>
+    <p :if={msg = Phoenix.Flash.get(@flash, :error)} role="alert" class="flash flash-error"><%= msg %></p>
+    <%= @inner_content %>
+  </main>
+</div>
+
+<script>
+  (function() {
+    function setActive() {
+      var path = window.location.pathname;
+      document.querySelectorAll('#studio-nav a').forEach(function(a) {
+        var ap = a.getAttribute('data-path');
+        a.classList.toggle('active', path === ap || (path === '/studio' && ap === '/studio/overview'));
+      });
+    }
+    document.addEventListener('DOMContentLoaded', setActive);
+    document.addEventListener('phx:navigate', setActive);
+    setActive();
+  })();
+</script>

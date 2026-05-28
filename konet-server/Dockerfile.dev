@@ -1,0 +1,27 @@
+FROM hexpm/elixir:1.16.3-erlang-26.2.5-debian-bookworm-20240612-slim
+
+RUN apt-get update -y && \
+    apt-get install -y build-essential nodejs npm curl inotify-tools && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN mix local.hex --force && mix local.rebar --force
+
+WORKDIR /app
+
+ENV MIX_ENV=dev
+ENV SECRET_KEY_BASE=devdevdevdevdevdevdevdevdevdevdevdevdevdevdevdevdevdevdevdevdevdev
+ENV KONET_JWT_SECRET=dev-secret-change-me-in-production-32chars
+
+COPY mix.exs ./
+RUN mix deps.get
+
+COPY assets/package.json assets/package.json
+RUN npm install --prefix assets
+
+COPY . .
+
+RUN mix assets.build
+
+EXPOSE 4000
+
+CMD ["mix", "phx.server"]

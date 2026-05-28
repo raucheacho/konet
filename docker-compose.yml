@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  konet-server:
+    build:
+      context: ./konet-server
+      dockerfile: Dockerfile
+    image: konet-server:latest
+    container_name: konet-server
+    restart: unless-stopped
+    ports:
+      - "${KONET_PORT:-4000}:4000"
+    environment:
+      MIX_ENV: prod
+      PHX_SERVER: "true"
+      KONET_HOST: "0.0.0.0"
+      KONET_PORT: "4000"
+      KONET_JWT_SECRET: "${KONET_JWT_SECRET:?KONET_JWT_SECRET env var is required}"
+      KONET_ANON_KEY: "${KONET_ANON_KEY:-}"
+      KONET_SERVICE_KEY: "${KONET_SERVICE_KEY:-}"
+      SECRET_KEY_BASE: "${SECRET_KEY_BASE:?SECRET_KEY_BASE env var is required}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - konet
+
+networks:
+  konet:
+    driver: bridge

@@ -1,0 +1,66 @@
+version: 2
+
+project_name: konet
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: konet
+    main: ./main.go
+    binary: konet
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: konet-io
+    name: konet-cli
+
+brews:
+  - name: konet
+    tap:
+      owner: konet-io
+      name: homebrew-tap
+    homepage: "https://konet.io"
+    description: "Konet — realtime infrastructure engine"
+    license: "MIT"
+    install: |
+      bin.install "konet"
+    test: |
+      system "#{bin}/konet", "--version"

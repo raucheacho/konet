@@ -1,0 +1,73 @@
+# ============================================================
+# KONET — .gitignore
+# ============================================================
+
+# ------------------------------------------------------------
+# Go (konet-cli + sdk/go)
+# ------------------------------------------------------------
+konet-cli/konet
+konet-cli/*.exe
+konet-cli/konet.config.toml
+sdk/go/*.test
+bin/
+dist/
+
+# ------------------------------------------------------------
+# Elixir / Phoenix (konet-server)
+# ------------------------------------------------------------
+konet-server/_build/
+konet-server/deps/
+konet-server/.elixir_ls/
+konet-server/priv/static/assets/
+konet-server/priv/uploads/
+konet-server/*.ez
+konet-server/erl_crash.dump
+konet-server/.fetch
+
+# ------------------------------------------------------------
+# JavaScript / TypeScript (sdk/js + konet-server/assets)
+# ------------------------------------------------------------
+node_modules/
+sdk/js/dist/
+konet-server/assets/node_modules/
+
+# ------------------------------------------------------------
+# Python (sdk/python)
+# ------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+sdk/python/dist/
+sdk/python/build/
+sdk/python/*.egg-info/
+sdk/python/.venv/
+.venv/
+
+# ------------------------------------------------------------
+# Docker
+# ------------------------------------------------------------
+.docker/
+docker-compose.override.yml
+
+# ------------------------------------------------------------
+# Secrets & config locaux
+# ------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.secret
+*.pem
+*.key
+konet-cli/konet.config.toml
+
+# ------------------------------------------------------------
+# Éditeurs & OS
+# ------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
