@@ -29,7 +29,8 @@ defmodule Konet.ChannelRegistry do
 
   @impl true
   def handle_cast({:joined, room_id}, state) do
-    :ets.update_counter(@table, room_id, {2, 1}, {room_id, 0})
+    count = :ets.update_counter(@table, room_id, {2, 1}, {room_id, 0})
+    if count == 1, do: Konet.Webhooks.emit("channel_occupied", %{room: room_id})
     Phoenix.PubSub.broadcast(Konet.PubSub, "studio:channels", :channels_updated)
     {:noreply, state}
   end
@@ -37,9 +38,15 @@ defmodule Konet.ChannelRegistry do
   @impl true
   def handle_cast({:left, room_id}, state) do
     case :ets.lookup(@table, room_id) do
-      [{_, count}] when count <= 1 -> :ets.delete(@table, room_id)
-      [{_, count}] -> :ets.insert(@table, {room_id, count - 1})
-      [] -> :ok
+      [{_, count}] when count <= 1 ->
+        :ets.delete(@table, room_id)
+        Konet.Webhooks.emit("channel_vacated", %{room: room_id})
+
+      [{_, count}] ->
+        :ets.insert(@table, {room_id, count - 1})
+
+      [] ->
+        :ok
     end
 
     Phoenix.PubSub.broadcast(Konet.PubSub, "studio:channels", :channels_updated)

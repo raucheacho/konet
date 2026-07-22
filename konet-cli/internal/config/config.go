@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,14 +25,16 @@ type ServerConfig struct {
 }
 
 type AuthConfig struct {
-	AnonKey    string `toml:"anon_key"`
-	ServiceKey string `toml:"service_key"`
-	JWTSecret  string `toml:"jwt_secret"`
+	AnonKey       string `toml:"anon_key"`
+	ServiceKey    string `toml:"service_key"`
+	JWTSecret     string `toml:"jwt_secret"`
+	SecretKeyBase string `toml:"secret_key_base"`
 }
 
+// The Studio is served by the Konet server itself on the server port — it has
+// no separate listener, so there is deliberately no port field here.
 type StudioConfig struct {
-	Enabled bool `toml:"enabled"`
-	Port    int  `toml:"port"`
+	Password string `toml:"password"` // optional; empty disables the Studio login (fine for local dev)
 }
 
 func Default() *Config {
@@ -41,14 +45,12 @@ func Default() *Config {
 			Mode: "docker",
 		},
 		Auth: AuthConfig{
-			AnonKey:    "kt_anon_xxxxxxxxxxxxxxxxxxxx",
-			ServiceKey: "kt_service_xxxxxxxxxxxxxxxxxx",
-			JWTSecret:  "change-me-in-production-min-32-chars!!",
+			AnonKey:       "kt_anon_xxxxxxxxxxxxxxxxxxxx",
+			ServiceKey:    "kt_service_xxxxxxxxxxxxxxxxxx",
+			JWTSecret:     "change-me-in-production-min-32-chars!!",
+			SecretKeyBase: GenerateSecret(64),
 		},
-		Studio: StudioConfig{
-			Enabled: true,
-			Port:    4001,
-		},
+		Studio: StudioConfig{},
 	}
 }
 
@@ -86,8 +88,12 @@ func (c *Config) ServerBaseURL() string {
 }
 
 func (c *Config) StudioURL() string {
-	if c.Studio.Port != 0 && c.Studio.Port != c.Server.Port {
-		return fmt.Sprintf("http://%s:%d/studio", c.Server.Host, c.Studio.Port)
-	}
 	return fmt.Sprintf("http://%s:%d/studio", c.Server.Host, c.Server.Port)
+}
+
+// GenerateSecret returns a random hex string of length n (n/2 random bytes).
+func GenerateSecret(n int) string {
+	b := make([]byte, n/2)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }

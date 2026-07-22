@@ -29,7 +29,49 @@ defmodule Konet.Auth do
   def service?(claims), do: Map.get(claims, "role") == "service"
   def user_id(claims), do: Map.get(claims, "sub")
 
+  @doc "Whether a Studio password is configured. When false, the Studio is unauthenticated."
+  def studio_auth_enabled? do
+    case studio_password() do
+      p when is_binary(p) and p != "" -> true
+      _ -> false
+    end
+  end
+
+  @doc "Constant-time check of a submitted Studio password against the configured one."
+  def verify_studio_password(submitted) when is_binary(submitted) do
+    case studio_password() do
+      p when is_binary(p) and p != "" -> Plug.Crypto.secure_compare(p, submitted)
+      _ -> false
+    end
+  end
+
+  def verify_studio_password(_), do: false
+
+  @doc """
+  Rotates the JWT signing secret and re-signs anon_key/service_key with it.
+  This immediately invalidates every previously issued token (there is no way
+  to revoke a single key without the others, since they all share one secret) —
+  the new secret only lives in this running process, so it must be copied into
+  konet.config.toml / your env vars or it is lost on restart.
+  """
+  def rotate! do
+    new_secret = :crypto.strong_rand_bytes(32) |> Base.encode16(case: :lower)
+    Application.put_env(:konet, :jwt_secret, new_secret)
+
+    {:ok, anon_key} = sign(%{"role" => "anon"})
+    {:ok, service_key} = sign(%{"role" => "service"})
+
+    Application.put_env(:konet, :anon_key, anon_key)
+    Application.put_env(:konet, :service_key, service_key)
+
+    %{jwt_secret: new_secret, anon_key: anon_key, service_key: service_key}
+  end
+
   defp jwt_secret do
     Application.get_env(:konet, :jwt_secret, "change-me-in-production-min-32-chars!!")
+  end
+
+  defp studio_password do
+    Application.get_env(:konet, :studio_password)
   end
 end

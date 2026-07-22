@@ -41,7 +41,9 @@ Payload: {"hello": "from studio"}
 
 ### Keys
 
-View and copy your `anon` and `service` keys. Rotate them directly from the dashboard.
+View your `anon` and `service` keys and the JWT secret they're signed with. "Rotate Secret"
+regenerates the JWT secret and both keys together — Konet uses one shared signing secret, so
+there's no way to invalidate a single key without the others.
 
 ### Logs
 
@@ -49,4 +51,6 @@ Real-time stream of join, leave, and broadcast events with timestamps.
 
 ## Authentication
 
-Studio uses the `KONET_SERVICE_KEY` for admin access. Pass it as a Bearer token or configure cookie-based sessions in production.
+Studio is gated by a separate password, not your `anon`/`service` keys — set `KONET_STUDIO_PASSWORD`
+to require sign-in at `/studio/login`. If it's unset, the Studio has no login at all, which is the
+default in local dev. Set it for any deployment reachable outside `localhost`.

@@ -1,6 +1,8 @@
 # Configuration
 
-Konet is configured through environment variables and an optional `konet.toml` file.
+The server is configured entirely through environment variables. The CLI's
+`konet.config.toml` is a local-development convenience that maps onto the same
+variables when it starts the container.
 
 ## Environment Variables
 
@@ -10,57 +12,91 @@ Konet is configured through environment variables and an optional `konet.toml` f
 |----------|----------|---------|-------------|
 | `MIX_ENV` | No | `prod` | Elixir environment |
 | `PHX_SERVER` | No | `true` | Start the web server |
-| `KONET_HOST` | No | `0.0.0.0` | Network interface to bind |
-| `KONET_PORT` | No | `4000` | HTTP port inside the container |
-| `SECRET_KEY_BASE` | **Yes** | — | 64-byte Phoenix secret |
+| `KONET_HOST` | No | `localhost` | Public hostname used in generated URLs |
+| `KONET_PORT` | No | `4000` | HTTP port |
+| `SECRET_KEY_BASE` | **Yes** | — | 64-char Phoenix secret (cookies/sessions) |
 
 ### Security
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `KONET_JWT_SECRET` | **Yes** | HMAC secret for JWT tokens |
-| `KONET_ANON_KEY` | No | Pre-generated anonymous token |
-| `KONET_SERVICE_KEY` | No | Pre-generated service/admin token |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `KONET_JWT_SECRET` | **Yes** | — | HMAC secret every token is signed with |
+| `KONET_ANON_KEY` | No | — | Pre-generated anonymous token |
+| `KONET_SERVICE_KEY` | No | — | Pre-generated service/admin token |
+| `KONET_STUDIO_PASSWORD` | No | unset | Password for `/studio`. Unset = no login (fine for local dev, not for anything reachable beyond localhost) |
+| `KONET_ALLOWED_ORIGINS` | No | `*` | WebSocket origin check: `*` accepts any origin; otherwise a comma-separated list (`https://app.example.com,https://admin.example.com`) |
 
-### Rate Limiting
+### Limits
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KONET_RATE_LIMIT` | `10` | Max messages per second per socket |
+| `KONET_RATE_LIMIT` | `60` | Max broadcasts per second per socket |
+| `KONET_CONN_RATE_LIMIT` | `200` | Max new connections per minute per IP |
 
-## konet.toml
+### Features
 
-The CLI generates this file on `konet init`:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KONET_HISTORY_LIMIT` | `0` | Keep the last N broadcasts per room and replay them to late joiners as a `konet:history` event. `0` disables. In-memory only — cleared on restart |
+| `KONET_WEBHOOK_URL` | unset | POST `channel_occupied`, `channel_vacated`, `member_joined`, `member_left` events to this URL |
+| `KONET_WEBHOOK_SECRET` | unset | If set, webhook requests carry `x-konet-signature: sha256=<hex>` (HMAC-SHA256 of the body) |
+
+## konet.config.toml (CLI, local dev)
+
+`konet init` generates this file; `konet start` maps it onto the env vars above:
 
 ```toml
 [server]
-host = "0.0.0.0"
+host = "localhost"
 port = 4000
+mode = "docker"
 
-[security]
-jwt_secret = "auto-generated"
-anon_key = "kt_anon_..."
-service_key = "kt_service_..."
+[auth]
+anon_key = "..."
+service_key = "..."
+jwt_secret = "..."
+secret_key_base = "..."   # generated once by `konet init`, then stable
 
-[limits]
-max_messages_per_second = 10
-max_presence_payload_kb = 16
+[studio]
+password = ""             # empty = no Studio login in local dev
 ```
 
 ## Generating Secrets
 
 ```bash
 # Phoenix secret_key_base
-openssl rand -base64 48
+openssl rand -hex 32
 
 # JWT secret
 openssl rand -hex 32
 ```
 
+## Webhook Payloads
+
+```json
+{
+  "event": "member_joined",
+  "data": { "room": "demo", "user": "alice" },
+  "timestamp": "2026-07-22T16:00:00Z"
+}
+```
+
+Verify authenticity by computing `HMAC-SHA256(body, KONET_WEBHOOK_SECRET)` and
+comparing it to the hex value in the `x-konet-signature` header
+(`sha256=<hex>`). Delivery is fire-and-forget: failures are logged on the
+server and not retried.
+
+## Monitoring
+
+`GET /metrics` (service-key Bearer auth) exposes Prometheus text format:
+connections, active channels, messages total, messages/sec, uptime. Point a
+Prometheus scrape job at it with `bearer_token` set to your service key.
+`GET /api/metrics` returns the same numbers as JSON.
+
 ## Production Checklist
 
 - [ ] Set strong `SECRET_KEY_BASE` and `KONET_JWT_SECRET`
-- [ ] Rotate `KONET_ANON_KEY` and `KONET_SERVICE_KEY` regularly
-- [ ] Run behind a reverse proxy (Nginx, Traefik, Caddy)
-- [ ] Enable TLS termination at the proxy
-- [ ] Restrict `KONET_HOST` to `127.0.0.1` if using a sidecar proxy
+- [ ] Set `KONET_STUDIO_PASSWORD`
+- [ ] Restrict `KONET_ALLOWED_ORIGINS` to your app's domains
+- [ ] Run behind a reverse proxy (Nginx, Traefik, Caddy) with TLS
+- [ ] Point Prometheus (or any scraper) at `/metrics`

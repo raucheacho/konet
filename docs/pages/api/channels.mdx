@@ -54,9 +54,31 @@ channel.on('message', (payload) => {
 channel.unsubscribe()
 ```
 
+## Authorization
+
+Rooms are open by default: any client connecting with a valid token can join any `room:*` topic. This is fine for public channels.
+
+To make a channel private, mint the client's token with a `channels` claim (see [Authentication](/api/authentication#scoping-a-token-to-specific-channels)) listing the topics it may join. Entries may end in `*` for prefix matching — `room:user-42:*` covers every room under that namespace. Joining any other topic returns:
+
+```json
+{ "status": "error", "response": { "reason": "unauthorized" } }
+```
+
+## History Replay
+
+With `KONET_HISTORY_LIMIT=N` set on the server, each room keeps its last N broadcasts in memory, and a client that joins late receives them in one push right after `presence_state`:
+
+```js
+channel.on("konet:history", ({ messages }) => {
+  // messages: [{ event, payload, timestamp }, ...] oldest first
+})
+```
+
+This is a replay buffer, not storage — it survives an empty room (an agent can broadcast before anyone is listening) but not a server restart. It is off by default.
+
 ## Rate Limiting
 
-Each socket is allowed up to `KONET_RATE_LIMIT` messages per second. Exceeding the limit returns:
+Each socket may send up to `KONET_RATE_LIMIT` broadcasts per second (default 60), and each IP may open `KONET_CONN_RATE_LIMIT` connections per minute (default 200). Exceeding the message limit returns:
 
 ```json
 { "status": "error", "response": { "reason": "rate_limited" } }

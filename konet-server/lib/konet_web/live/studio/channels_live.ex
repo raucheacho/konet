@@ -10,13 +10,24 @@ defmodule KonetWeb.Studio.ChannelsLive do
     {:ok,
      assign(socket,
        page_title: "Channels",
-       channels: Konet.ChannelRegistry.list()
+       channels: Konet.ChannelRegistry.list(),
+       selected_room: nil,
+       panel_open: false
      )}
   end
 
   @impl true
   def handle_info(:channels_updated, socket) do
     {:noreply, assign(socket, channels: Konet.ChannelRegistry.list())}
+  end
+
+  @impl true
+  def handle_event("select_room", %{"id" => id}, socket) do
+    {:noreply, assign(socket, selected_room: id, panel_open: true)}
+  end
+
+  def handle_event("close_detail", _, socket) do
+    {:noreply, assign(socket, panel_open: false)}
   end
 
   @impl true
@@ -27,7 +38,7 @@ defmodule KonetWeb.Studio.ChannelsLive do
 
       <%= if Enum.empty?(@channels) do %>
         <div class="empty-state">
-          <div class="empty-icon">📡</div>
+          <div class="empty-icon">⊕</div>
           <p>No active channels yet.</p>
           <p class="muted mono">Connect a client to see channels here.</p>
         </div>
@@ -43,7 +54,7 @@ defmodule KonetWeb.Studio.ChannelsLive do
             </thead>
             <tbody>
               <%= for ch <- @channels do %>
-                <tr>
+                <tr class="row-clickable" phx-click="select_room" phx-value-id={ch.id}>
                   <td class="mono accent"><%= "room:#{ch.id}" %></td>
                   <td class="mono"><%= ch.subscribers %></td>
                   <td><span class="badge badge-green">active</span></td>
@@ -53,7 +64,24 @@ defmodule KonetWeb.Studio.ChannelsLive do
           </table>
         </div>
       <% end %>
+
+      <% presence = room_presence(@selected_room) %>
+      <.detail_panel :if={@selected_room} open={@panel_open} title={"room:#{@selected_room}"} on_close="close_detail">
+        <.detail_section text="Subscribers">
+          <.detail_row :for={user <- presence} label={user.user_id} value={user.role} />
+          <p :if={presence == []} class="muted">No one connected right now.</p>
+        </.detail_section>
+      </.detail_panel>
     </div>
     """
+  end
+
+  defp room_presence(nil), do: []
+
+  defp room_presence(room_id) do
+    Konet.Presence.list("room:#{room_id}")
+    |> Enum.map(fn {user_id, %{metas: [meta | _]}} ->
+      %{user_id: user_id, role: Map.get(meta, :role, "user")}
+    end)
   end
 end

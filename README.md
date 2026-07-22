@@ -14,6 +14,8 @@ Konet is a lightweight, self-hosted alternative to managed realtime services. It
 
 ## Quick Start
 
+### Local development (CLI)
+
 ```bash
 # Install the CLI
 curl -sSL https://konet.io/install | sh
@@ -24,6 +26,18 @@ konet start
 
 # Open the studio
 konet studio
+```
+
+### Self-hosting (VPS, Coolify, Dokploy)
+
+Point your platform at `docker-compose.yml`, or run the image directly:
+
+```bash
+docker run -d --name konet -p 4000:4000 \
+  -e KONET_JWT_SECRET="$(openssl rand -hex 32)" \
+  -e SECRET_KEY_BASE="$(openssl rand -hex 32)" \
+  -e KONET_STUDIO_PASSWORD="pick-a-password" \
+  ghcr.io/raucheacho/konet:latest
 ```
 
 ## Architecture

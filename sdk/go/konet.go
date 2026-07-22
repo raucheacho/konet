@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,7 +63,10 @@ func New(url, token string, opts ...ClientOptions) *Client {
 
 // Connect opens the WebSocket connection and starts the read loop.
 func (c *Client) Connect(ctx context.Context) error {
-	wsURL := fmt.Sprintf("%s?token=%s&vsn=2.0.0", c.url, c.token)
+	// Phoenix mounts the actual websocket transport at "<socket path>/websocket",
+	// not at the socket path itself (e.g. "/socket" -> "/socket/websocket").
+	base := strings.TrimSuffix(c.url, "/")
+	wsURL := fmt.Sprintf("%s/websocket?token=%s&vsn=2.0.0", base, c.token)
 
 	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
 		HTTPHeader: c.opts.HTTPHeader,

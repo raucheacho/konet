@@ -30,8 +30,8 @@ archives:
       - goos: windows
         format: zip
     files:
-      - LICENSE
-      - README.md
+      - src: ../LICENSE
+      - src: ../README.md
 
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"

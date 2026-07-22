@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	ImageName     = "ghcr.io/konet-io/konet-server:latest"
+	ImageName     = "ghcr.io/raucheacho/konet:latest"
 	ContainerName = "konet-server"
 )
 
@@ -35,12 +36,13 @@ func New() (*Client, error) {
 }
 
 type StartOptions struct {
-	Image      string
-	Port       int
-	JWTSecret  string
-	AnonKey    string
-	ServiceKey string
-	SecretKey  string
+	Image          string
+	Port           int
+	JWTSecret      string
+	AnonKey        string
+	ServiceKey     string
+	SecretKey      string
+	StudioPassword string
 }
 
 func (c *Client) ImageExists(ctx context.Context, img string) (bool, error) {
@@ -49,10 +51,8 @@ func (c *Client) ImageExists(ctx context.Context, img string) (bool, error) {
 		return false, err
 	}
 	for _, im := range images {
-		for _, tag := range im.RepoTags {
-			if tag == img {
-				return true, nil
-			}
+		if slices.Contains(im.RepoTags, img) {
+			return true, nil
 		}
 	}
 	return false, nil
@@ -82,6 +82,7 @@ func (c *Client) Start(ctx context.Context, opts StartOptions) error {
 				fmt.Sprintf("KONET_JWT_SECRET=%s", opts.JWTSecret),
 				fmt.Sprintf("KONET_ANON_KEY=%s", opts.AnonKey),
 				fmt.Sprintf("KONET_SERVICE_KEY=%s", opts.ServiceKey),
+				fmt.Sprintf("KONET_STUDIO_PASSWORD=%s", opts.StudioPassword),
 				fmt.Sprintf("SECRET_KEY_BASE=%s", opts.SecretKey),
 			},
 			ExposedPorts: nat.PortSet{hostPort: struct{}{}},

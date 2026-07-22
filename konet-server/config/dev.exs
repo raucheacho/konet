@@ -10,6 +10,8 @@ config :konet, KonetWeb.Endpoint,
     esbuild: {Esbuild, :install_and_run, [:konet, ~w(--sourcemap=inline --watch)]}
   ]
 
+# Env-configurable keys (studio_password, rate limits, history, webhooks)
+# are read at boot in runtime.exs so they don't require a recompile.
 config :konet,
   jwt_secret: "change-me-in-production-min-32-chars!!",
   anon_key: nil,
