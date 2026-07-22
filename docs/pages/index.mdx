@@ -1,0 +1,54 @@
+import { Cards, Card } from 'nextra/components'
+
+# Konet
+
+**Self-hosted realtime infrastructure engine.**
+
+WebSocket channels, presence tracking, and broadcast — packaged as a single Docker container, managed through a CLI, and consumed via idiomatic SDKs.
+
+<Cards className="mt-8">
+  <Card title="⚡ Getting Started" href="/getting-started">
+    Install the CLI and run your first server in under a minute.
+  </Card>
+  <Card title="🖥 Server" href="/server">
+    Configuration, deployment, and the built-in Studio dashboard.
+  </Card>
+  <Card title="🛠 CLI" href="/cli">
+    Manage channels, keys, logs, and upgrades from the terminal.
+  </Card>
+  <Card title="📦 SDKs" href="/sdks">
+    Connect from Go, JavaScript, or Python with type-safe clients.
+  </Card>
+  <Card title="🔌 API" href="/api">
+    Channels, presence, authentication, and rate-limiting semantics.
+  </Card>
+</Cards>
+
+## Why Konet?
+
+| Feature | Konet |
+|---------|-------|
+| Self-hosted | ✅ Docker-native |
+| Channels | ✅ Pub/sub rooms |
+| Presence | ✅ Online tracking |
+| JWT Auth | ✅ Built-in |
+| Rate Limiting | ✅ Per-socket |
+| Admin Dashboard | ✅ LiveView Studio |
+
+## Quick Start
+
+```bash
+# 1. Install
+curl -sSL https://konet.io/install | sh
+
+# 2. Initialize
+konet init
+
+# 3. Start
+konet start
+
+# 4. Open Studio
+konet studio
+```
+
+Your realtime backend is now running on `http://localhost:4000`.

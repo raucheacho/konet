@@ -13,7 +13,13 @@ config :konet, KonetWeb.Endpoint,
 config :konet,
   jwt_secret: "change-me-in-production-min-32-chars!!",
   anon_key: nil,
-  service_key: nil
+  service_key: nil,
+  studio_password: nil,
+  rate_limit_messages: 60,
+  rate_limit_connections: 200,
+  history_limit: 0,
+  webhook_url: nil,
+  webhook_secret: nil
 
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",

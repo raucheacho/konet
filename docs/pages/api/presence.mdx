@@ -1,0 +1,61 @@
+# Presence
+
+Presence tracks which users are online in a channel and what metadata they share.
+
+## How It Works
+
+When a user joins a channel, the server automatically tracks them via `Phoenix.Presence`. The current state is pushed immediately after join.
+
+## Metadata
+
+Default metadata includes:
+
+- `online_at` — Unix timestamp
+- `room` — channel topic
+- `role` — from JWT claims
+
+You can extend metadata by customizing the `after_join` handler in `KonetWeb.RoomChannel`.
+
+## Client API
+
+### JavaScript
+
+```js
+channel.presence.onSync(() => {
+  const list = channel.presence.list()
+  console.log(list) // [{ id: 'user_1', metas: [...] }]
+})
+```
+
+### Go
+
+```go
+p := ch.Presence()
+p.OnSync(func() {
+    for id, meta := range p.List() {
+        log.Println(id, meta)
+    }
+})
+```
+
+### Python
+
+```python
+presence = channel.presence
+presence.on_sync(lambda: print(presence.list()))
+```
+
+## Fetching State
+
+Clients can request the current presence state at any time:
+
+```js
+const state = await channel.send('presence_state', {})
+```
+
+## Diff Events
+
+Presence sends lightweight diffs on change:
+
+- `presence_state` — full snapshot on join
+- `presence_diff` — `{ joins: {}, leaves: {} }` on change

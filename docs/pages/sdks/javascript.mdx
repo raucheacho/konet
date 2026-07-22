@@ -1,0 +1,62 @@
+# JavaScript SDK
+
+Type-safe client for browsers and Node.js.
+
+## Installation
+
+```bash
+npm install @konet-io/konet-js
+```
+
+## Quick Start
+
+```ts
+import { createClient } from '@konet-io/konet-js'
+
+const client = createClient('ws://localhost:4000/socket', {
+  token: 'kt_anon_your_key',
+})
+
+const channel = client.channel('room:lobby')
+await channel.subscribe()
+
+channel.on('message', (payload) => {
+  console.log('Received:', payload)
+})
+
+channel.send('message', { text: 'Hello!' })
+```
+
+## Client Options
+
+```ts
+interface KonetClientOptions {
+  token: string
+  timeout?: number      // default: 10000
+  heartbeat?: number    // default: 30000
+  reconnect?: boolean   // default: true
+}
+```
+
+## Presence
+
+```ts
+channel.presence.onSync(() => {
+  const users = channel.presence.list()
+  console.log('Online:', users.length)
+})
+```
+
+## Error Handling
+
+```ts
+try {
+  await channel.subscribe()
+} catch (err) {
+  console.error('Join failed:', err.reason)
+}
+```
+
+## Types
+
+The SDK is written in TypeScript and ships with declaration files.

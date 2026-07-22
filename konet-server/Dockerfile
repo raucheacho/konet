@@ -42,15 +42,16 @@ RUN mix release
 # ──────────────────────────────────────────────
 FROM ${RUNNER_IMAGE}
 
+# curl is required by the docker-compose/Coolify/Dokploy healthcheck
 RUN apt-get update -y && \
-    apt-get install -y libstdc++6 openssl libncurses5 locales ca-certificates && \
+    apt-get install -y libstdc++6 openssl libncurses5 locales ca-certificates curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
 
-ENV LANG en_US.UTF-8
-ENV LANGUAGE en_US:en
-ENV LC_ALL en_US.UTF-8
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
 
 WORKDIR /app
 
@@ -64,5 +65,8 @@ ENV MIX_ENV=prod
 ENV PHX_SERVER=true
 
 EXPOSE 4000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:4000/api/health || exit 1
 
 CMD ["/app/bin/konet", "start"]

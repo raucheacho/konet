@@ -1,0 +1,65 @@
+# Go SDK
+
+Lightweight WebSocket client for Go services and CLIs.
+
+## Installation
+
+```bash
+go get github.com/konet-io/konet-sdk-go
+```
+
+## Quick Start
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+
+    "github.com/konet-io/konet-sdk-go"
+)
+
+func main() {
+    ctx := context.Background()
+
+    client, err := konet.Connect(ctx, "ws://localhost:4000/socket", "kt_anon_your_key")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+
+    ch := client.Channel("room:lobby")
+    if err := ch.Subscribe(); err != nil {
+        log.Fatal(err)
+    }
+
+    ch.On("message", func(payload map[string]any) {
+        log.Printf("recv: %+v\n", payload)
+    })
+
+    ch.Send("message", map[string]any{"text": "Hello from Go!"})
+
+    select {} // block
+}
+```
+
+## API
+
+```go
+// Client
+c, err := konet.Connect(ctx, url, token)
+c.Close()
+
+// Channel
+ch := c.Channel("room:lobby")
+ch.Subscribe()
+ch.Send(event string, payload map[string]any)
+ch.On(event string, handler func(map[string]any))
+ch.Unsubscribe()
+
+// Presence
+p := ch.Presence()
+p.List()
+p.OnSync(func())
+```

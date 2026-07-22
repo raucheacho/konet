@@ -2,8 +2,8 @@ defmodule Konet.RateLimiter do
   use GenServer
 
   @table :konet_rl
-  @max_connections_per_minute 200
-  @max_messages_per_second 60
+  @default_connections_per_minute 200
+  @default_messages_per_second 60
 
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
@@ -12,14 +12,20 @@ defmodule Konet.RateLimiter do
   def check_connection(ip) do
     key = "conn:#{ip}:#{minute()}"
     count = :ets.update_counter(@table, key, {2, 1}, {key, 0})
-    if count <= @max_connections_per_minute, do: :ok, else: {:error, :rate_limited}
+    if count <= max_connections_per_minute(), do: :ok, else: {:error, :rate_limited}
   end
 
   def check_message(socket_id) do
     key = "msg:#{socket_id}:#{second()}"
     count = :ets.update_counter(@table, key, {2, 1}, {key, 0})
-    if count <= @max_messages_per_second, do: :ok, else: {:error, :rate_limited}
+    if count <= max_messages_per_second(), do: :ok, else: {:error, :rate_limited}
   end
+
+  defp max_connections_per_minute,
+    do: Application.get_env(:konet, :rate_limit_connections, @default_connections_per_minute)
+
+  defp max_messages_per_second,
+    do: Application.get_env(:konet, :rate_limit_messages, @default_messages_per_second)
 
   @impl true
   def init(_) do

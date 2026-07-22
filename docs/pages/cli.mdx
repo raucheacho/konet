@@ -1,0 +1,108 @@
+# CLI
+
+The Konet CLI is a single Go binary that manages the lifecycle of the Konet Server container.
+
+## Installation
+
+```bash
+curl -sSL https://konet.io/install | sh
+```
+
+Or build from source:
+
+```bash
+cd konet-cli
+go build -o konet .
+```
+
+## Commands
+
+### `konet init`
+
+Scaffolds `konet.toml` and `.env` with generated secrets.
+
+```bash
+konet init
+```
+
+### `konet start`
+
+Pulls the server image (if missing) and starts the container.
+
+```bash
+konet start
+```
+
+### `konet stop`
+
+Stops and removes the running container.
+
+```bash
+konet stop
+```
+
+### `konet status`
+
+Shows container state, port mapping, and uptime.
+
+```bash
+konet status
+```
+
+### `konet logs`
+
+Tails server logs.
+
+```bash
+konet logs        # follow
+konet logs -n 50  # last 50 lines
+```
+
+### `konet studio`
+
+Opens the Studio dashboard in your default browser.
+
+```bash
+konet studio
+```
+
+### `konet channels`
+
+Lists active channel topics and subscriber counts.
+
+```bash
+konet channels
+```
+
+### `konet publish <channel> <event>`
+
+Publishes a message to a channel from the CLI.
+
+```bash
+konet publish room:lobby notification '{"text":"Server rebooted"}'
+```
+
+### `konet keys`
+
+Displays or rotates API keys.
+
+```bash
+konet keys        # show
+konet keys rotate # regenerate
+```
+
+### `konet upgrade`
+
+Pulls the latest server image and restarts the container.
+
+```bash
+konet upgrade
+```
+
+## Global Flags
+
+| Flag | Description |
+|------|-------------|
+| `--config` | Path to custom `konet.toml` |
+| `--debug` | Enable debug logging |
+| `-v, --version` | Print version |

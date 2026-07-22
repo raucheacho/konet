@@ -24,14 +24,16 @@ defmodule Konet.Metrics do
 
   @impl true
   def handle_cast(:connection_opened, state) do
-    broadcast_update()
-    {:noreply, %{state | connections: state.connections + 1}}
+    new_state = %{state | connections: state.connections + 1}
+    broadcast_update(new_state)
+    {:noreply, new_state}
   end
 
   @impl true
   def handle_cast(:connection_closed, state) do
-    broadcast_update()
-    {:noreply, %{state | connections: max(0, state.connections - 1)}}
+    new_state = %{state | connections: max(0, state.connections - 1)}
+    broadcast_update(new_state)
+    {:noreply, new_state}
   end
 
   @impl true
@@ -57,7 +59,9 @@ defmodule Konet.Metrics do
     {:noreply, new_state}
   end
 
-  defp broadcast_update do
-    send(self(), :compute_rate)
+  # Pushes the connection-count change to the Studio without touching the
+  # 1-second message window — flushing it here would corrupt the msg/s rate.
+  defp broadcast_update(state) do
+    Phoenix.PubSub.broadcast(Konet.PubSub, "studio:metrics", {:metrics_update, state})
   end
 end

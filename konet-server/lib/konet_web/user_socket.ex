@@ -17,7 +17,8 @@ defmodule KonetWeb.UserSocket do
        socket
        |> assign(:user_id, Map.get(claims, "sub", "anon_" <> socket_id))
        |> assign(:role, Map.get(claims, "role", "anon"))
-       |> assign(:socket_id, socket_id)}
+       |> assign(:socket_id, socket_id)
+       |> assign(:channels, Map.get(claims, "channels"))}
     else
       {:error, :rate_limited} -> {:error, %{reason: "rate_limited"}}
       _ -> {:error, %{reason: "unauthorized"}}

@@ -8,9 +8,11 @@ defmodule KonetWeb.Endpoint do
     same_site: "Lax"
   ]
 
+  # check_origin comes from the endpoint config (KONET_ALLOWED_ORIGINS at
+  # runtime in prod, false in dev) rather than being pinned open here.
   socket "/socket", KonetWeb.UserSocket,
-    websocket: [timeout: 45_000, check_origin: false],
-    longpoll: false
+    websocket: [timeout: 45_000],
+    longpoll: true
 
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]]

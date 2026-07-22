@@ -1,0 +1,65 @@
+# Server
+
+The Konet Server is an Elixir/Phoenix application packaged as a Docker image. It exposes WebSocket endpoints, handles JWT authentication, tracks presence, and serves the Studio dashboard.
+
+## Architecture
+
+```
+┌─────────────────────────────────────┐
+│           Konet Server              │
+│  ┌─────────┐  ┌─────────────────┐  │
+│  │ Bandit  │  │  Phoenix PubSub │  │
+│  │ Endpoint│  │  Presence       │  │
+│  └────┬────┘  │  RateLimiter    │  │
+│       │       │  ChannelRegistry│  │
+│       │       └─────────────────┘  │
+│  WebSocket /socket                 │
+│  HTTP      /api/*                  │
+│  LiveView  /studio                 │
+└─────────────────────────────────────┘
+```
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `KONET_HOST` | No | `0.0.0.0` | Bind address |
+| `KONET_PORT` | No | `4000` | HTTP port |
+| `KONET_JWT_SECRET` | **Yes** | — | Secret for token signing |
+| `KONET_ANON_KEY` | No | — | Default anonymous key |
+| `KONET_SERVICE_KEY` | No | — | Admin service key |
+| `SECRET_KEY_BASE` | **Yes** | — | Phoenix secret |
+
+## Configuration File
+
+`konet.toml` (managed by the CLI):
+
+```toml
+[server]
+port = 4000
+jwt_secret = "..."
+anon_key = "kt_anon_..."
+service_key = "kt_service_..."
+
+[rate_limiter]
+max_messages_per_second = 10
+```
+
+## Docker Compose
+
+```yaml
+version: "3.9"
+services:
+  konet-server:
+    build: ./konet-server
+    ports:
+      - "4000:4000"
+    environment:
+      KONET_JWT_SECRET: ${KONET_JWT_SECRET}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+```
+
+## Topics
+
+- [Configuration](/server/configuration) — deep dive into env vars and `konet.toml`
+- [Studio](/server/studio) — using the built-in LiveView admin dashboard
