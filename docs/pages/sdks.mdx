@@ -1,0 +1,35 @@
+# SDKs
+
+Konet provides first-party SDKs for Go, JavaScript/TypeScript, and Python.
+
+All SDKs share the same mental model:
+
+1. **Connect** — open a WebSocket with a JWT token
+2. **Channel** — join a topic like `room:lobby`
+3. **Subscribe** — start receiving events
+4. **Send / Receive** — broadcast and listen
+
+## Installation
+
+<Cards>
+  <Card title="JavaScript" href="/sdks/javascript">
+    <code>npm install @konet-io/konet-js</code>
+  </Card>
+  <Card title="Go" href="/sdks/go">
+    <code>go get github.com/konet-io/konet-sdk-go</code>
+  </Card>
+  <Card title="Python" href="/sdks/python">
+    <code>pip install konet-py</code>
+  </Card>
+</Cards>
+
+## Common Interface
+
+| Operation | JavaScript | Go | Python |
+|-----------|------------|----|--------|
+| Connect | `createClient(url, opts)` | `konet.Connect(ctx, url, token)` | `KonetClient(url, token)` |
+| Channel | `client.channel("room:lobby")` | `client.Channel("room:lobby")` | `client.channel("room:lobby")` |
+| Subscribe | `await channel.subscribe()` | `ch.Subscribe()` | `await channel.subscribe()` |
+| Send | `channel.send(event, payload)` | `ch.Send(event, payload)` | `await channel.send(event, payload)` |
+| Listen | `channel.on(event, handler)` | `ch.On(event, handler)` | `channel.on(event, handler)` |
+| Presence | `channel.presence` | `ch.Presence()` | `channel.presence` |

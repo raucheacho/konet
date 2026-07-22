@@ -1,0 +1,56 @@
+# Studio
+
+Studio is a built-in LiveView dashboard for monitoring and managing your Konet server in real time.
+
+## Launch
+
+```bash
+konet studio
+```
+
+This opens `http://localhost:4000/studio` in your browser.
+
+## Sections
+
+### Overview
+
+Live metrics at a glance:
+
+- **Active Connections** — current WebSocket clients
+- **Messages/min** — throughput counter
+- **Channels** — number of active channel topics
+- **Uptime** — server runtime
+
+### Channels
+
+Browse active rooms, view subscriber counts, and inspect individual channel state.
+
+### Presence
+
+See who is online in each room. Presence entries include metadata such as `online_at` and custom roles.
+
+### Broadcast
+
+Send manual messages to any channel from the UI. Useful for debugging and testing integrations.
+
+```
+Channel: room:lobby
+Event:   ping
+Payload: {"hello": "from studio"}
+```
+
+### Keys
+
+View your `anon` and `service` keys and the JWT secret they're signed with. "Rotate Secret"
+regenerates the JWT secret and both keys together — Konet uses one shared signing secret, so
+there's no way to invalidate a single key without the others.
+
+### Logs
+
+Real-time stream of join, leave, and broadcast events with timestamps.
+
+## Authentication
+
+Studio is gated by a separate password, not your `anon`/`service` keys — set `KONET_STUDIO_PASSWORD`
+to require sign-in at `/studio/login`. If it's unset, the Studio has no login at all, which is the
+default in local dev. Set it for any deployment reachable outside `localhost`.

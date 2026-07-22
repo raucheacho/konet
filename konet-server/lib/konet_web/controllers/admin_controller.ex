@@ -50,6 +50,7 @@ defmodule KonetWeb.AdminController do
       {:ok, _claims} ->
         KonetWeb.Endpoint.broadcast("room:#{channel}", event, payload)
         Metrics.message_sent()
+        Konet.History.record(channel, event, payload)
         json(conn, %{ok: true, channel: channel, event: event})
 
       {:halt, conn} ->
@@ -69,6 +70,39 @@ defmodule KonetWeb.AdminController do
           uptime_seconds: DateTime.diff(DateTime.utc_now(), m.started_at, :second),
           channels: length(ChannelRegistry.list())
         })
+
+      {:halt, conn} ->
+        conn
+    end
+  end
+
+  def prometheus(conn, _params) do
+    case require_service_key(conn) do
+      {:ok, _claims} ->
+        m = Metrics.get()
+        uptime = DateTime.diff(DateTime.utc_now(), m.started_at, :second)
+
+        body = """
+        # HELP konet_connections Current WebSocket connections
+        # TYPE konet_connections gauge
+        konet_connections #{m.connections}
+        # HELP konet_channels Active channels
+        # TYPE konet_channels gauge
+        konet_channels #{length(ChannelRegistry.list())}
+        # HELP konet_messages_total Messages broadcast since boot
+        # TYPE konet_messages_total counter
+        konet_messages_total #{m.messages_total}
+        # HELP konet_messages_per_second Messages broadcast in the last second
+        # TYPE konet_messages_per_second gauge
+        konet_messages_per_second #{m.messages_rate}
+        # HELP konet_uptime_seconds Seconds since boot
+        # TYPE konet_uptime_seconds counter
+        konet_uptime_seconds #{uptime}
+        """
+
+        conn
+        |> put_resp_content_type("text/plain")
+        |> send_resp(200, body)
 
       {:halt, conn} ->
         conn

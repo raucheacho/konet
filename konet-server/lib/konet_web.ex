@@ -52,6 +52,7 @@ defmodule KonetWeb do
   defp html_helpers do
     quote do
       import Phoenix.HTML
+      import KonetWeb.StudioComponents
       alias Phoenix.LiveView.JS
       unquote(verified_routes())
     end

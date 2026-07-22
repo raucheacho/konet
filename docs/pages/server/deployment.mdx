@@ -1,0 +1,74 @@
+# Deployment
+
+Konet ships as a single container: `ghcr.io/raucheacho/konet`. No database, no
+sidecars — one service, a handful of env vars, done.
+
+## Required env vars
+
+Every deployment needs these two (generate with `openssl rand -hex 32`):
+
+```
+KONET_JWT_SECRET=<random 32+ chars>
+SECRET_KEY_BASE=<random 64 chars>
+```
+
+Strongly recommended for anything reachable beyond localhost:
+
+```
+KONET_STUDIO_PASSWORD=<pick one>
+KONET_ALLOWED_ORIGINS=https://app.example.com
+KONET_HOST=realtime.example.com
+```
+
+See [Configuration](/server/configuration) for the full list.
+
+## Coolify
+
+1. **New Resource → Docker Image**, image: `ghcr.io/raucheacho/konet:latest`
+   (or point a Docker Compose resource at this repo's `docker-compose.yml`).
+2. Set the env vars above in the resource's **Environment Variables**.
+3. Set the exposed port to `4000` and attach your domain — Coolify's Traefik
+   handles TLS and WebSocket upgrades out of the box.
+4. Deploy. The image has a built-in healthcheck on `/api/health`, so Coolify
+   shows real health status.
+
+## Dokploy
+
+1. **Create Application → Docker (image)** with `ghcr.io/raucheacho/konet:latest`,
+   or **Compose** pointing at this repo.
+2. Add the env vars, map your domain to container port `4000`.
+3. Deploy — same healthcheck applies.
+
+## Plain VPS (docker compose)
+
+```bash
+curl -O https://raw.githubusercontent.com/raucheacho/konet/main/docker-compose.yml
+cat > .env <<EOF
+KONET_JWT_SECRET=$(openssl rand -hex 32)
+SECRET_KEY_BASE=$(openssl rand -hex 32)
+KONET_STUDIO_PASSWORD=change-me
+KONET_HOST=realtime.example.com
+EOF
+docker compose up -d
+```
+
+Put Nginx/Caddy/Traefik in front for TLS. WebSockets need the usual upgrade
+headers — Caddy does it automatically; for Nginx:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+}
+```
+
+## After first boot
+
+1. Open `https://your-domain/studio`, sign in with `KONET_STUDIO_PASSWORD`.
+2. Go to **Keys** and click **Rotate Secret** to generate the anon/service keys,
+   or pre-set `KONET_ANON_KEY`/`KONET_SERVICE_KEY` as env vars.
+3. Copy the rotated values back into your platform's env settings so they
+   survive redeploys.

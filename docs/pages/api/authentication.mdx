@@ -1,0 +1,74 @@
+# Authentication
+
+Konet uses JWT tokens for all client connections. Tokens are validated with the `KONET_JWT_SECRET` environment variable.
+
+## Token Types
+
+### Anonymous Key (`kt_anon_*`)
+
+- Generated automatically on `konet init`
+- Grants standard channel join and broadcast rights
+- Safe to embed in client-side code
+
+### Service Key (`kt_service_*`)
+
+- Grants admin-level access
+- Required for Studio and key-rotation endpoints
+- **Never expose in client bundles**
+
+## JWT Claims
+
+| Claim | Required | Description |
+|-------|----------|-------------|
+| `sub` | Yes | User ID |
+| `role` | No | `anon` or `service` |
+| `channels` | No | List of topics this token may join — see [Scoping a token to specific channels](#scoping-a-token-to-specific-channels) |
+| `exp` | Recommended | Expiration timestamp |
+
+## Example Token (Node.js)
+
+```js
+import jwt from 'jsonwebtoken'
+
+const token = jwt.sign(
+  { sub: 'user_123', role: 'anon' },
+  process.env.KONET_JWT_SECRET,
+  { expiresIn: '1h' }
+)
+```
+
+## Connection
+
+Pass the token when opening the socket:
+
+```js
+const client = createClient('ws://localhost:4000/socket', { token })
+```
+
+On the server, `socket.assigns.user_id` and `socket.assigns.role` are populated from validated claims.
+
+## Scoping a Token to Specific Channels
+
+By default, any valid token (including the shared `anon_key`) can join any `room:*` channel — fine for public rooms like a shared lobby or a broadcast feed.
+
+For private, per-user channels (a 1:1 chat, a single device's location feed, an AI agent's private session), mint a token from your own backend with a `channels` claim listing exactly the topics it's allowed to join:
+
+```js
+import jwt from 'jsonwebtoken'
+
+const token = jwt.sign(
+  { sub: 'user_42', channels: ['room:chat-42-99'] },
+  process.env.KONET_JWT_SECRET,
+  { expiresIn: '1h' }
+)
+```
+
+A client connecting with this token can only join `room:chat-42-99` — attempting to join any other room returns `{ reason: "unauthorized" }` on join, and the attempt is logged in the Studio's log stream.
+
+Entries may end in `*` to grant a whole namespace with one token instead of minting one per room:
+
+```js
+{ sub: 'user_42', channels: ['room:user-42:*'] }   // room:user-42:inbox, room:user-42:location, ...
+```
+
+Tokens without a `channels` claim keep today's open behavior, so nothing changes for existing anon/service keys.

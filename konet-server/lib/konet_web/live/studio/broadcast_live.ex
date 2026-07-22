@@ -29,6 +29,7 @@ defmodule KonetWeb.Studio.BroadcastLive do
             KonetWeb.Endpoint.broadcast("room:#{channel}", event, payload)
 
             Konet.Metrics.message_sent()
+            Konet.History.record(channel, event, payload)
 
             {:noreply,
              assign(socket,

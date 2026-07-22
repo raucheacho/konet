@@ -2,9 +2,8 @@ package cmd
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/konet-io/konet-cli/internal/config"
@@ -66,16 +65,25 @@ func startDocker(cfg *config.Config) error {
 		}
 	}
 
-	secretKey := generateSecret(64)
+	if cfg.Auth.SecretKeyBase == "" {
+		// Config predates persisted secret_key_base — generate once and save it
+		// so it survives future container restarts.
+		cfg.Auth.SecretKeyBase = config.GenerateSecret(64)
+		cwd, _ := os.Getwd()
+		if err := config.Save(cfg, cwd); err != nil {
+			return fmt.Errorf("failed to persist secret_key_base: %w", err)
+		}
+	}
 
 	fmt.Printf("Starting konet-server on port %d...\n", cfg.Server.Port)
 	if err := cli.Start(ctx, docker.StartOptions{
-		Image:      image,
-		Port:       cfg.Server.Port,
-		JWTSecret:  cfg.Auth.JWTSecret,
-		AnonKey:    cfg.Auth.AnonKey,
-		ServiceKey: cfg.Auth.ServiceKey,
-		SecretKey:  secretKey,
+		Image:          image,
+		Port:           cfg.Server.Port,
+		JWTSecret:      cfg.Auth.JWTSecret,
+		AnonKey:        cfg.Auth.AnonKey,
+		ServiceKey:     cfg.Auth.ServiceKey,
+		SecretKey:      cfg.Auth.SecretKeyBase,
+		StudioPassword: cfg.Studio.Password,
 	}); err != nil {
 		return fmt.Errorf("container start failed: %w", err)
 	}
@@ -91,10 +99,4 @@ func startDocker(cfg *config.Config) error {
 	fmt.Printf("  Studio     %s\n", cfg.StudioURL())
 	fmt.Println("\n  Run `konet logs --follow` to stream logs")
 	return nil
-}
-
-func generateSecret(n int) string {
-	b := make([]byte, n/2)
-	rand.Read(b)
-	return hex.EncodeToString(b)
 }

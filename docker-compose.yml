@@ -5,7 +5,7 @@ services:
     build:
       context: ./konet-server
       dockerfile: Dockerfile
-    image: konet-server:latest
+    image: ghcr.io/raucheacho/konet:latest
     container_name: konet-server
     restart: unless-stopped
     ports:
@@ -13,11 +13,20 @@ services:
     environment:
       MIX_ENV: prod
       PHX_SERVER: "true"
-      KONET_HOST: "0.0.0.0"
+      # Public hostname used in generated URLs — set this to your domain
+      # (e.g. realtime.example.com) in Coolify/Dokploy env settings.
+      KONET_HOST: "${KONET_HOST:-localhost}"
       KONET_PORT: "4000"
       KONET_JWT_SECRET: "${KONET_JWT_SECRET:?KONET_JWT_SECRET env var is required}"
       KONET_ANON_KEY: "${KONET_ANON_KEY:-}"
       KONET_SERVICE_KEY: "${KONET_SERVICE_KEY:-}"
+      KONET_STUDIO_PASSWORD: "${KONET_STUDIO_PASSWORD:-}"
+      KONET_ALLOWED_ORIGINS: "${KONET_ALLOWED_ORIGINS:-*}"
+      KONET_RATE_LIMIT: "${KONET_RATE_LIMIT:-60}"
+      KONET_CONN_RATE_LIMIT: "${KONET_CONN_RATE_LIMIT:-200}"
+      KONET_HISTORY_LIMIT: "${KONET_HISTORY_LIMIT:-0}"
+      KONET_WEBHOOK_URL: "${KONET_WEBHOOK_URL:-}"
+      KONET_WEBHOOK_SECRET: "${KONET_WEBHOOK_SECRET:-}"
       SECRET_KEY_BASE: "${SECRET_KEY_BASE:?SECRET_KEY_BASE env var is required}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4000/api/health"]

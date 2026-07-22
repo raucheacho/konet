@@ -9,6 +9,9 @@ defmodule Konet.Application do
       Konet.Metrics,
       Konet.ChannelRegistry,
       Konet.RateLimiter,
+      Konet.LogBuffer,
+      Konet.History,
+      {Task.Supervisor, name: Konet.TaskSupervisor},
       KonetWeb.Telemetry,
       KonetWeb.Endpoint
     ]

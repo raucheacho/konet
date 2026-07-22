@@ -1,0 +1,190 @@
+@import 'nextra-theme-docs/style.css';
+
+:root {
+  --konet-bg: #0a0a0f;
+  --konet-surface: #111118;
+  --konet-border: #1e1e2e;
+  --konet-accent: #7c6af7;
+  --konet-accent2: #4ade80;
+  --konet-accent3: #fb923c;
+  --konet-text: #e2e2f0;
+  --konet-muted: #6b6b8a;
+  --konet-red: #f87171;
+  --konet-blue: #38bdf8;
+  --konet-code-bg: #0d0d16;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--konet-bg) !important;
+  color: var(--konet-text) !important;
+}
+
+.nextra-nav-container {
+  background: rgba(10, 10, 15, 0.8) !important;
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--konet-border) !important;
+}
+
+.nextra-nav-container-blur {
+  background: transparent !important;
+}
+
+.nextra-sidebar-container {
+  background: var(--konet-surface) !important;
+  border-right: 1px solid var(--konet-border) !important;
+}
+
+.nextra-sidebar-container a,
+.nextra-sidebar-container button {
+  color: var(--konet-muted) !important;
+}
+
+.nextra-sidebar-container a:hover,
+.nextra-sidebar-container button:hover {
+  color: var(--konet-text) !important;
+  background: rgba(124, 106, 247, 0.08) !important;
+}
+
+.nextra-sidebar-container .active > a {
+  color: var(--konet-accent) !important;
+  background: rgba(124, 106, 247, 0.12) !important;
+}
+
+article {
+  color: var(--konet-text) !important;
+}
+
+article h1,
+article h2,
+article h3,
+article h4 {
+  color: var(--konet-text) !important;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+article a {
+  color: var(--konet-accent) !important;
+  text-decoration: none;
+}
+
+article a:hover {
+  text-decoration: underline;
+}
+
+code,
+kbd,
+pre {
+  font-family: 'JetBrains Mono', monospace !important;
+  background: var(--konet-code-bg) !important;
+  border: 1px solid var(--konet-border) !important;
+  border-radius: 8px !important;
+}
+
+pre {
+  background: var(--konet-code-bg) !important;
+}
+
+.nextra-code-block pre {
+  background: var(--konet-code-bg) !important;
+  border: 1px solid var(--konet-border) !important;
+}
+
+table {
+  border-color: var(--konet-border) !important;
+}
+
+th {
+  background: var(--konet-surface) !important;
+  color: var(--konet-muted) !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 0.75rem !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+td {
+  border-color: var(--konet-border) !important;
+}
+
+tr:hover td {
+  background: rgba(124, 106, 247, 0.04) !important;
+}
+
+.nextra-breadcrumb {
+  color: var(--konet-muted) !important;
+}
+
+.nextra-search input {
+  background: var(--konet-surface) !important;
+  border: 1px solid var(--konet-border) !important;
+  color: var(--konet-text) !important;
+}
+
+.nextra-toc a {
+  color: var(--konet-muted) !important;
+}
+
+.nextra-toc a:hover {
+  color: var(--konet-text) !important;
+}
+
+.nextra-footer {
+  border-top: 1px solid var(--konet-border) !important;
+  color: var(--konet-muted) !important;
+}
+
+/* Custom badges */
+.badge {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 500;
+  margin-left: 0.5rem;
+}
+
+.badge-green {
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--konet-accent2);
+  border: 1px solid rgba(74, 222, 128, 0.25);
+}
+
+.badge-purple {
+  background: rgba(124, 106, 247, 0.12);
+  color: var(--konet-accent);
+  border: 1px solid rgba(124, 106, 247, 0.25);
+}
+
+.badge-orange {
+  background: rgba(251, 146, 60, 0.12);
+  color: var(--konet-accent3);
+  border: 1px solid rgba(251, 146, 60, 0.25);
+}
+
+/* Cards */
+.card {
+  background: var(--konet-surface);
+  border: 1px solid var(--konet-border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.card:hover {
+  border-color: rgba(124, 106, 247, 0.4);
+  transform: translateY(-2px);
+}
+
+.card h3 {
+  margin-top: 0;
+  font-size: 1rem;
+}
+
+.card p {
+  margin-bottom: 0;
+  color: var(--konet-muted);
+  font-size: 0.875rem;
+}

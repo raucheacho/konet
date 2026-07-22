@@ -1,0 +1,131 @@
+# Getting Started
+
+This guide walks you through installing Konet and running your first channel subscription.
+
+## Prerequisites
+
+- Docker & Docker Compose
+- (Optional) Go 1.22+ if building the CLI from source
+
+## 1. Install the CLI
+
+### macOS / Linux
+
+```bash
+curl -sSL https://konet.io/install | sh
+```
+
+### From source
+
+```bash
+git clone https://github.com/konet-io/konet.git
+cd konet/konet-cli
+go build -o konet .
+mv konet /usr/local/bin/
+```
+
+Verify:
+
+```bash
+konet --version
+```
+
+## 2. Initialize
+
+```bash
+konet init
+```
+
+This generates a `konet.toml` config and a `.env` file with secrets.
+
+## 3. Start the server
+
+```bash
+konet start
+```
+
+The first start pulls the `konet-server` image and boots the container.
+
+## 4. Verify
+
+```bash
+konet status
+```
+
+You should see the server as **running**.
+
+## 5. Connect with an SDK
+
+### JavaScript
+
+```bash
+npm install @konet-io/konet-js
+```
+
+```js
+import { createClient } from '@konet-io/konet-js'
+
+const client = createClient('ws://localhost:4000/socket', {
+  token: 'kt_anon_your_key',
+})
+
+const channel = client.channel('room:lobby')
+await channel.subscribe()
+
+channel.on('message', (payload) => console.log(payload))
+channel.send('message', { text: 'Hello Konet!' })
+```
+
+### Python
+
+```bash
+pip install konet-py
+```
+
+```python
+import asyncio
+from konet import KonetClient
+
+async def main():
+    client = KonetClient('ws://localhost:4000/socket', token='kt_anon_your_key')
+    await client.connect()
+    channel = client.channel('room:lobby')
+    await channel.subscribe()
+    channel.on('message', lambda payload: print(payload))
+    await channel.send('message', {'text': 'Hello Konet!'})
+
+asyncio.run(main())
+```
+
+### Go
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "github.com/konet-io/konet-sdk-go"
+)
+
+func main() {
+    client, err := konet.Connect(context.Background(), "ws://localhost:4000/socket", "kt_anon_your_key")
+    if err != nil {
+        log.Fatal(err)
+    }
+    ch := client.Channel("room:lobby")
+    if err := ch.Subscribe(); err != nil {
+        log.Fatal(err)
+    }
+    ch.On("message", func(p map[string]any) {
+        log.Println(p)
+    })
+    ch.Send("message", map[string]any{"text": "Hello Konet!"})
+}
+```
+
+## Next Steps
+
+- Learn about [Server configuration](/server)
+- Explore [CLI commands](/cli)
+- Read the [API reference](/api)

@@ -7,10 +7,15 @@ defmodule KonetWeb.Studio.LogsLive do
       Phoenix.PubSub.subscribe(Konet.PubSub, "studio:logs")
     end
 
+    entries =
+      Konet.LogBuffer.list()
+      |> Enum.reverse()
+      |> Enum.map(&Map.put(&1, :id, "log-#{System.unique_integer([:positive])}"))
+
     {:ok,
      socket
-     |> assign(page_title: "Logs", paused: false, log_count: 0)
-     |> stream(:logs, [])}
+     |> assign(page_title: "Logs", paused: false, log_count: length(entries))
+     |> stream(:logs, entries)}
   end
 
   @impl true
@@ -60,7 +65,7 @@ defmodule KonetWeb.Studio.LogsLive do
       </div>
 
       <div :if={@log_count == 0} class="empty-state">
-        <div class="empty-icon">📋</div>
+        <div class="empty-icon">▤</div>
         <p>Waiting for events...</p>
       </div>
     </div>

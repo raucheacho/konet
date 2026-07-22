@@ -16,7 +16,7 @@ defmodule Konet.MixProject do
   def application do
     [
       mod: {Konet.Application, []},
-      extra_applications: [:logger, :runtime_tools, :crypto]
+      extra_applications: [:logger, :runtime_tools, :crypto, :inets, :ssl]
     ]
   end
 

@@ -30,8 +30,8 @@ archives:
       - goos: windows
         format: zip
     files:
-      - LICENSE
-      - README.md
+      - src: ../LICENSE
+      - src: ../README.md
 
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
@@ -54,7 +54,7 @@ release:
 
 brews:
   - name: konet
-    tap:
+    repository:
       owner: konet-io
       name: homebrew-tap
     homepage: "https://konet.io"
@@ -64,3 +64,13 @@ brews:
       bin.install "konet"
     test: |
       system "#{bin}/konet", "--version"
+
+scoops:
+  - name: konet
+    repository:
+      owner: konet-io
+      name: scoop-bucket
+    folder: bucket
+    homepage: "https://konet.io"
+    description: "Konet — realtime infrastructure engine"
+    license: MIT

@@ -54,11 +54,15 @@ class KonetClient:
     async def __aexit__(self, *_: Any) -> None:
         await self.disconnect()
 
-    async def connect(self) -> None:
+    def _websocket_url(self) -> str:
+        # Phoenix mounts the actual websocket transport at "<socket path>/websocket",
+        # not at the socket path itself (e.g. "/socket" -> "/socket/websocket").
+        base = self._url.rstrip("/")
         params = urlencode({"token": self._token, "vsn": "2.0.0"})
-        ws_url = f"{self._url}?{params}"
+        return f"{base}/websocket?{params}"
 
-        self._ws = await websockets.connect(ws_url)
+    async def connect(self) -> None:
+        self._ws = await websockets.connect(self._websocket_url())
         self._connected = True
 
         self._tasks = [
@@ -139,7 +143,6 @@ class KonetClient:
 
     async def _reconnect(self) -> None:
         try:
-            params = urlencode({"token": self._token, "vsn": "2.0.0"})
-            self._ws = await websockets.connect(f"{self._url}?{params}")
+            self._ws = await websockets.connect(self._websocket_url())
         except Exception:
             self._ws = None

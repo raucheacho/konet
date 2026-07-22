@@ -22,6 +22,7 @@ export class KonetClient {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
+  private sendBuffer: PhxFrame[] = [];
 
   constructor(url: string, options: KonetClientOptions) {
     this.url = url;
@@ -66,13 +67,17 @@ export class KonetClient {
   private openSocket(): void {
     this.state = "connecting";
 
-    const wsUrl = `${this.url}?token=${encodeURIComponent(this.opts.token)}&vsn=2.0.0`;
+    // Phoenix mounts the actual websocket transport at "<socket path>/websocket",
+    // not at the socket path itself (e.g. "/socket" -> "/socket/websocket").
+    const base = this.url.replace(/\/$/, "");
+    const wsUrl = `${base}/websocket?token=${encodeURIComponent(this.opts.token)}&vsn=2.0.0`;
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
       this.state = "connected";
       this.reconnectAttempts = 0;
       this.startHeartbeat();
+      this.flushSendBuffer();
     };
 
     this.ws.onmessage = (ev) => this.handleFrame(ev.data);
@@ -116,6 +121,18 @@ export class KonetClient {
   private sendFrame(frame: PhxFrame): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(frame));
+    } else {
+      // Socket isn't open yet (e.g. subscribe() called right after createClient()) —
+      // buffer and flush once connected instead of silently dropping the frame.
+      this.sendBuffer.push(frame);
+    }
+  }
+
+  private flushSendBuffer(): void {
+    const buffered = this.sendBuffer;
+    this.sendBuffer = [];
+    for (const frame of buffered) {
+      this.sendFrame(frame);
     }
   }
 
