@@ -12,13 +12,13 @@ This guide walks you through installing Konet and running your first channel sub
 ### macOS / Linux
 
 ```bash
-curl -sSL https://konet.io/install | sh
+brew install raucheacho/tap/konet
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/konet-io/konet.git
+git clone https://github.com/raucheacho/konet.git
 cd konet/konet-cli
 go build -o konet .
 mv konet /usr/local/bin/
@@ -59,11 +59,11 @@ You should see the server as **running**.
 ### JavaScript
 
 ```bash
-npm install @konet-io/konet-js
+npm install @raucheacho/konet-js
 ```
 
 ```js
-import { createClient } from '@konet-io/konet-js'
+import { createClient } from '@raucheacho/konet-js'
 
 const client = createClient('ws://localhost:4000/socket', {
   token: 'kt_anon_your_key',
@@ -105,7 +105,7 @@ package main
 import (
     "context"
     "log"
-    "github.com/konet-io/konet-sdk-go"
+    "github.com/raucheacho/konet/sdk/go"
 )
 
 func main() {

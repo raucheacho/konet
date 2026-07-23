@@ -58,7 +58,7 @@ brews:
       owner: raucheacho
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: "https://konet.io"
+    homepage: "https://github.com/raucheacho/konet"
     description: "Konet — realtime infrastructure engine"
     license: "MIT"
     install: |
@@ -73,6 +73,6 @@ scoops:
       name: scoop-bucket
       token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
     directory: bucket
-    homepage: "https://konet.io"
+    homepage: "https://github.com/raucheacho/konet"
     description: "Konet — realtime infrastructure engine"
     license: MIT

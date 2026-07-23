@@ -7,9 +7,9 @@ const config: DocsThemeConfig = {
     </span>
   ),
   project: {
-    link: 'https://github.com/konet-io/konet',
+    link: 'https://github.com/raucheacho/konet',
   },
-  docsRepositoryBase: 'https://github.com/konet-io/konet/tree/main/docs',
+  docsRepositoryBase: 'https://github.com/raucheacho/konet/tree/main/docs',
   footer: {
     text: 'Konet Docs — MIT License',
   },

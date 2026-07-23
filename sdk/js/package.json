@@ -1,5 +1,5 @@
 {
-  "name": "@konet-io/konet-js",
+  "name": "@raucheacho/konet-js",
   "version": "0.1.0",
   "description": "JavaScript SDK for Konet realtime infrastructure",
   "main": "dist/index.js",

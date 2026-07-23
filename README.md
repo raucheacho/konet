@@ -18,7 +18,7 @@ Konet is a lightweight, self-hosted alternative to managed realtime services. It
 
 ```bash
 # Install the CLI
-curl -sSL https://konet.io/install | sh
+brew install raucheacho/tap/konet
 
 # Initialize and start
 konet init
@@ -57,8 +57,8 @@ docker run -d --name konet -p 4000:4000 \
 
 | Language | Package | Status |
 |----------|---------|--------|
-| JavaScript | `@konet-io/konet-js` | ✅ |
-| Go | `github.com/konet-io/konet-sdk-go` | ✅ |
+| JavaScript | `@raucheacho/konet-js` | ✅ |
+| Go | `github.com/raucheacho/konet/sdk/go` | ✅ |
 | Python | `konet-py` | ✅ |
 
 ## Documentation
