@@ -18,39 +18,32 @@ You can extend metadata by customizing the `after_join` handler in `KonetWeb.Roo
 
 ## Client API
 
+First-class presence helpers currently ship in the **JavaScript SDK**. The Go
+and Python SDKs receive the raw `presence_state` / `presence_diff` events, which
+you can handle with `on(...)` (see below).
+
 ### JavaScript
 
 ```js
-channel.presence.onSync(() => {
-  const list = channel.presence.list()
-  console.log(list) // [{ id: 'user_1', metas: [...] }]
+// convenience: the SDK merges state + diffs and emits the current member list
+channel.on('presence', (users) => {
+  console.log(users) // [{ id: 'user_1', online_at, room, role }, ...]
 })
+
+// or read the current snapshot on demand
+const users = channel.getPresence().list()
 ```
 
-### Go
+### Go / Python (raw events)
 
 ```go
-p := ch.Presence()
-p.OnSync(func() {
-    for id, meta := range p.List() {
-        log.Println(id, meta)
-    }
-})
+ch.On("presence_state", func(p interface{}) { /* full snapshot */ })
+ch.On("presence_diff",  func(p interface{}) { /* { joins, leaves } */ })
 ```
-
-### Python
 
 ```python
-presence = channel.presence
-presence.on_sync(lambda: print(presence.list()))
-```
-
-## Fetching State
-
-Clients can request the current presence state at any time:
-
-```js
-const state = await channel.send('presence_state', {})
+channel.on("presence_state", lambda p: print("state:", p))
+channel.on("presence_diff", lambda p: print("diff:", p))
 ```
 
 ## Diff Events

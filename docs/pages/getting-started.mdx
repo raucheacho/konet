@@ -5,7 +5,7 @@ This guide walks you through installing Konet and running your first channel sub
 ## Prerequisites
 
 - Docker & Docker Compose
-- (Optional) Go 1.22+ if building the CLI from source
+- (Optional) Go 1.25+ if building the CLI from source
 
 ## 1. Install the CLI
 
@@ -36,7 +36,15 @@ konet --version
 konet init
 ```
 
-This generates a `konet.toml` config and a `.env` file with secrets.
+This creates a `konet.config.toml` in the current directory. Open it and set a
+strong `jwt_secret`, then generate your keys:
+
+```bash
+konet keys generate
+```
+
+This writes an `anon_key` (safe for clients) and a `service_key` (server-side
+only) back into `konet.config.toml`.
 
 ## 3. Start the server
 
@@ -56,6 +64,8 @@ You should see the server as **running**.
 
 ## 5. Connect with an SDK
 
+Use the `anon_key` from `konet.config.toml` as the token below.
+
 ### JavaScript
 
 ```bash
@@ -66,7 +76,7 @@ npm install @raucheacho/konet-js
 import { createClient } from '@raucheacho/konet-js'
 
 const client = createClient('ws://localhost:4000/socket', {
-  token: 'kt_anon_your_key',
+  token: '<anon_key>',
 })
 
 const channel = client.channel('room:lobby')
@@ -87,12 +97,12 @@ import asyncio
 from konet import KonetClient
 
 async def main():
-    client = KonetClient('ws://localhost:4000/socket', token='kt_anon_your_key')
-    await client.connect()
-    channel = client.channel('room:lobby')
-    await channel.subscribe()
-    channel.on('message', lambda payload: print(payload))
-    await channel.send('message', {'text': 'Hello Konet!'})
+    async with KonetClient('ws://localhost:4000/socket', token='<anon_key>') as client:
+        channel = client.channel('room:lobby')
+        await channel.subscribe()
+        channel.on('message', lambda payload: print(payload))
+        await channel.send('message', {'text': 'Hello Konet!'})
+        await asyncio.sleep(60)
 
 asyncio.run(main())
 ```
@@ -105,22 +115,29 @@ package main
 import (
     "context"
     "log"
-    "github.com/raucheacho/konet/sdk/go"
+
+    konet "github.com/raucheacho/konet/sdk/go"
 )
 
 func main() {
-    client, err := konet.Connect(context.Background(), "ws://localhost:4000/socket", "kt_anon_your_key")
-    if err != nil {
+    ctx := context.Background()
+
+    client := konet.New("ws://localhost:4000/socket", "<anon_key>")
+    if err := client.Connect(ctx); err != nil {
         log.Fatal(err)
     }
+    defer client.Disconnect()
+
     ch := client.Channel("room:lobby")
-    if err := ch.Subscribe(); err != nil {
+    if err := ch.Subscribe(ctx); err != nil {
         log.Fatal(err)
     }
-    ch.On("message", func(p map[string]any) {
+    ch.On("message", func(p interface{}) {
         log.Println(p)
     })
     ch.Send("message", map[string]any{"text": "Hello Konet!"})
+
+    select {} // block
 }
 ```
 

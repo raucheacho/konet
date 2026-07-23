@@ -27,9 +27,9 @@ All SDKs share the same mental model:
 
 | Operation | JavaScript | Go | Python |
 |-----------|------------|----|--------|
-| Connect | `createClient(url, opts)` | `konet.Connect(ctx, url, token)` | `KonetClient(url, token)` |
+| Connect | `createClient(url, opts)` | `konet.New(url, token)` + `client.Connect(ctx)` | `KonetClient(url, token=...)` + `await client.connect()` |
 | Channel | `client.channel("room:lobby")` | `client.Channel("room:lobby")` | `client.channel("room:lobby")` |
-| Subscribe | `await channel.subscribe()` | `ch.Subscribe()` | `await channel.subscribe()` |
+| Subscribe | `await channel.subscribe()` | `ch.Subscribe(ctx)` | `await channel.subscribe()` |
 | Send | `channel.send(event, payload)` | `ch.Send(event, payload)` | `await channel.send(event, payload)` |
 | Listen | `channel.on(event, handler)` | `ch.On(event, handler)` | `channel.on(event, handler)` |
-| Presence | `channel.presence` | `ch.Presence()` | `channel.presence` |
+| Presence | `channel.getPresence()` | — | — |
