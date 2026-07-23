@@ -49,14 +49,15 @@ changelog:
 
 release:
   github:
-    owner: konet-io
-    name: konet-cli
+    owner: raucheacho
+    name: konet
 
 brews:
   - name: konet
     repository:
-      owner: konet-io
+      owner: raucheacho
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://konet.io"
     description: "Konet — realtime infrastructure engine"
     license: "MIT"
@@ -68,9 +69,10 @@ brews:
 scoops:
   - name: konet
     repository:
-      owner: konet-io
+      owner: raucheacho
       name: scoop-bucket
-    folder: bucket
+      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+    directory: bucket
     homepage: "https://konet.io"
     description: "Konet — realtime infrastructure engine"
     license: MIT
