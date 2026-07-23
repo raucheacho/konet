@@ -59,7 +59,7 @@ docker run -d --name konet -p 4000:4000 \
 |----------|---------|--------|
 | JavaScript | `@raucheacho/konet-js` | ✅ |
 | Go | `github.com/raucheacho/konet/sdk/go` | ✅ |
-| Python | `konet-py` | ✅ |
+| Python | `konet` | ✅ |
 
 ## Documentation
 

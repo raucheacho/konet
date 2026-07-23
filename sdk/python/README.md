@@ -1,4 +1,4 @@
-# konet-py
+# konet (Python SDK)
 
 Async Python SDK for [Konet](https://github.com/raucheacho/konet), the
 self-hosted realtime engine (channels, presence, broadcast).
@@ -6,7 +6,7 @@ self-hosted realtime engine (channels, presence, broadcast).
 ## Install
 
 ```bash
-pip install konet-py
+pip install konet
 ```
 
 ## Usage
