@@ -1,4 +1,4 @@
-module github.com/konet-io/konet-cli
+module github.com/raucheacho/konet/konet-cli
 
 go 1.25.0
 

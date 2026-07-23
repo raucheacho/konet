@@ -20,6 +20,10 @@ RUN mix local.hex --force && mix local.rebar --force
 
 ENV MIX_ENV=prod
 
+# BEAM's JIT dual-maps code memory, which QEMU can't emulate — single-map it
+# so cross-platform image builds (CI building arm64 on amd64) don't crash.
+ENV ERL_FLAGS="+JMsingle true"
+
 COPY mix.exs mix.lock ./
 RUN mix deps.get --only $MIX_ENV
 RUN mkdir config

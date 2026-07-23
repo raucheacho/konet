@@ -1,14 +1,15 @@
-# Go SDK
+# konet (Go SDK)
 
-Lightweight WebSocket client for Go services and CLIs.
+Lightweight WebSocket client for [Konet](https://github.com/raucheacho/konet),
+the self-hosted realtime engine (channels, presence, broadcast).
 
-## Installation
+## Install
 
 ```bash
 go get github.com/raucheacho/konet/sdk/go
 ```
 
-## Quick Start
+## Usage
 
 ```go
 package main
@@ -44,30 +45,19 @@ func main() {
 }
 ```
 
-## API
+## Options
 
 ```go
-// Client — New builds the client; Connect opens the socket.
-c := konet.New(url, token)              // optional konet.ClientOptions
-c := konet.New(url, token, konet.ClientOptions{
+client := konet.New(url, token, konet.ClientOptions{
     HeartbeatInterval: 30 * time.Second,
     ReconnectDelay:    time.Second,
     MaxReconnectTries: 10,
     HTTPHeader:        nil, // extra headers for the WS handshake
 })
-err := c.Connect(ctx)
-c.Disconnect()
-
-// Channel
-ch := c.Channel("room:lobby")
-err := ch.Subscribe(ctx)                 // blocks until the join is confirmed
-err := ch.Send(event string, payload interface{})
-off := ch.On(event string, handler func(payload interface{})) // off() removes it
-err := ch.Unsubscribe()
-
-// Decoding payloads into a struct
-var msg MyType
-err := konet.MarshalPayload(payload, &msg)
 ```
 
-> Presence tracking is currently available in the JavaScript SDK only.
+Decode a payload into a struct with `konet.MarshalPayload(payload, &target)`.
+
+## License
+
+MIT

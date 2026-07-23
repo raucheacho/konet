@@ -1,4 +1,4 @@
-module github.com/konet-io/konet-go
+module github.com/raucheacho/konet/sdk/go
 
 go 1.23
 

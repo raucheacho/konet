@@ -7,8 +7,12 @@ Konet exposes a WebSocket API built on Phoenix Channels.
 | Protocol | URL | Purpose |
 |----------|-----|---------|
 | WebSocket | `ws://host:4000/socket` | Channel transport |
-| HTTP | `http://host:4000/api/health` | Health check |
-| HTTP | `http://host:4000/api/keys` | Key management (service only) |
+| HTTP | `GET /api/health` | Health check |
+| HTTP | `GET /api/channels` | Active channels + subscriber counts (service key) |
+| HTTP | `GET /api/presence/:channel` | Presence for a channel (service key) |
+| HTTP | `POST /api/broadcast` | Broadcast to a channel (service key) |
+| HTTP | `GET /api/metrics` | Metrics as JSON (service key) |
+| HTTP | `GET /metrics` | Prometheus text format (service key) |
 
 ## Message Format
 

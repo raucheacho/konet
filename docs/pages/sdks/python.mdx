@@ -5,7 +5,7 @@ Async-first client for Python 3.10+.
 ## Installation
 
 ```bash
-pip install konet-py
+pip install konet
 ```
 
 ## Quick Start
@@ -15,40 +15,47 @@ import asyncio
 from konet import KonetClient
 
 async def main():
-    client = KonetClient('ws://localhost:4000/socket', token='kt_anon_your_key')
-    await client.connect()
+    async with KonetClient("ws://localhost:4000/socket", token="<anon_key>") as client:
+        channel = client.channel("room:lobby")
+        await channel.subscribe()
 
-    channel = client.channel('room:lobby')
-    await channel.subscribe()
+        channel.on("message", lambda payload: print("Received:", payload))
+        await channel.send("message", {"text": "Hello from Python!"})
 
-    def on_message(payload):
-        print('Received:', payload)
-
-    channel.on('message', on_message)
-    await channel.send('message', {'text': 'Hello from Python!'})
-
-    await asyncio.Event().wait()
+        await asyncio.sleep(60)
 
 asyncio.run(main())
+```
+
+`async with` connects on enter and disconnects on exit. If you prefer to manage
+the lifecycle yourself, call `connect()` / `disconnect()` explicitly:
+
+```python
+client = KonetClient("ws://localhost:4000/socket", token="<anon_key>")
+await client.connect()
+# ...
+await client.disconnect()
 ```
 
 ## API
 
 ```python
-client = KonetClient(url, token, timeout=10, heartbeat=30)
+# token is keyword-only
+client = KonetClient(
+    url,
+    token=...,
+    heartbeat_interval=30.0,
+    reconnect_delay=1.0,
+    max_reconnect_tries=10,
+)
 await client.connect()
-await client.close()
+await client.disconnect()
 
-channel = client.channel('room:lobby')
+channel = client.channel("room:lobby")
 await channel.subscribe()
-channel.on(event, callback)
+off = channel.on(event, callback)   # off() removes the handler
 await channel.send(event, payload)
 await channel.unsubscribe()
-
-# Presence
-presence = channel.presence
-presence.list()
-presence.on_sync(callback)
 ```
 
 ## Testing

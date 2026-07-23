@@ -1,6 +1,6 @@
 package main
 
-import "github.com/konet-io/konet-cli/cmd"
+import "github.com/raucheacho/konet/konet-cli/cmd"
 
 func main() {
 	cmd.Execute()

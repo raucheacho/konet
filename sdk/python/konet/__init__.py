@@ -1,5 +1,5 @@
 """
-konet-py — Python SDK for Konet realtime infrastructure.
+konet — Python SDK for Konet realtime infrastructure.
 
 Quick start::
 
