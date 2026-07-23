@@ -5,7 +5,7 @@ The Konet CLI is a single Go binary that manages the lifecycle of the Konet Serv
 ## Installation
 
 ```bash
-curl -sSL https://konet.io/install | sh
+brew install raucheacho/tap/konet
 ```
 
 Or build from source:
@@ -19,7 +19,9 @@ go build -o konet .
 
 ### `konet init`
 
-Scaffolds `konet.toml` and `.env` with generated secrets.
+Creates `konet.config.toml` in the current directory with a default config and a
+generated `secret_key_base`. Edit it to set a strong `jwt_secret`, then run
+`konet keys generate`.
 
 ```bash
 konet init
@@ -51,11 +53,11 @@ konet status
 
 ### `konet logs`
 
-Tails server logs.
+Streams server logs. Prints the current buffer and exits, or pass `-f` to follow.
 
 ```bash
-konet logs        # follow
-konet logs -n 50  # last 50 lines
+konet logs        # print current logs
+konet logs -f     # follow (until Ctrl+C)
 ```
 
 ### `konet studio`
@@ -66,29 +68,31 @@ Opens the Studio dashboard in your default browser.
 konet studio
 ```
 
-### `konet channels`
+### `konet channels list`
 
 Lists active channel topics and subscriber counts.
 
 ```bash
-konet channels
+konet channels list
 ```
 
-### `konet publish <channel> <event>`
+### `konet publish <channel> <payload>`
 
-Publishes a message to a channel from the CLI.
+Broadcasts a JSON message to a channel from the CLI. `<payload>` must be valid
+JSON; the event name defaults to `message` and can be set with `-e/--event`.
 
 ```bash
-konet publish room:lobby notification '{"text":"Server rebooted"}'
+konet publish lobby '{"text":"Server rebooted"}'
+konet publish lobby '{"text":"hi"}' --event notification
 ```
 
-### `konet keys`
+### `konet keys generate`
 
-Displays or rotates API keys.
+Generates `anon_key` and `service_key` from your `jwt_secret` and writes them
+back to `konet.config.toml`.
 
 ```bash
-konet keys        # show
-konet keys rotate # regenerate
+konet keys generate
 ```
 
 ### `konet upgrade`
@@ -99,10 +103,12 @@ Pulls the latest server image and restarts the container.
 konet upgrade
 ```
 
+Commands that talk to a running server (`init`, `keys`, `channels`, `publish`,
+`logs`, `status`, `studio`) read `konet.config.toml` from the current directory.
+
 ## Global Flags
 
 | Flag | Description |
 |------|-------------|
-| `--config` | Path to custom `konet.toml` |
-| `--debug` | Enable debug logging |
-| `-v, --version` | Print version |
+| `--version` | Print the CLI version |
+| `-h, --help` | Show help for any command |

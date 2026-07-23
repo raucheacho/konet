@@ -5,16 +5,16 @@ Type-safe client for browsers and Node.js.
 ## Installation
 
 ```bash
-npm install @konet-io/konet-js
+npm install @raucheacho/konet-js
 ```
 
 ## Quick Start
 
 ```ts
-import { createClient } from '@konet-io/konet-js'
+import { createClient } from '@raucheacho/konet-js'
 
 const client = createClient('ws://localhost:4000/socket', {
-  token: 'kt_anon_your_key',
+  token: '<anon_key>',
 })
 
 const channel = client.channel('room:lobby')
@@ -27,24 +27,31 @@ channel.on('message', (payload) => {
 channel.send('message', { text: 'Hello!' })
 ```
 
+`createClient` connects immediately. Call `client.disconnect()` to close the
+socket.
+
 ## Client Options
 
 ```ts
 interface KonetClientOptions {
   token: string
-  timeout?: number      // default: 10000
-  heartbeat?: number    // default: 30000
-  reconnect?: boolean   // default: true
+  heartbeatIntervalMs?: number   // default: 30000
+  reconnectDelayMs?: number      // default: 1000
+  maxReconnectAttempts?: number  // default: 10
 }
 ```
 
 ## Presence
 
+Presence updates arrive as a `presence` event with the current member list:
+
 ```ts
-channel.presence.onSync(() => {
-  const users = channel.presence.list()
+channel.on('presence', (users) => {
   console.log('Online:', users.length)
 })
+
+// or read the current snapshot on demand
+const users = channel.getPresence().list()
 ```
 
 ## Error Handling

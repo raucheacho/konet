@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/konet-io/konet-cli/internal/config"
+	"github.com/raucheacho/konet/konet-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 

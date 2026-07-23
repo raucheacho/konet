@@ -10,12 +10,12 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/konet-io/konet-cli/internal/docker"
+	"github.com/raucheacho/konet/konet-cli/internal/docker"
 	"github.com/spf13/cobra"
 )
 
-const upgradeScriptURL = "https://raw.githubusercontent.com/konet-io/konet-cli/main/install.sh"
-const latestReleaseURL = "https://api.github.com/repos/konet-io/konet-cli/releases/latest"
+const upgradeScriptURL = "https://raw.githubusercontent.com/raucheacho/konet/main/install.sh"
+const latestReleaseURL = "https://api.github.com/repos/raucheacho/konet/releases/latest"
 
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
@@ -37,14 +37,14 @@ var upgradeCmd = &cobra.Command{
 		fmt.Printf("New version available: %s → %s\n", current, latest)
 
 		if runtime.GOOS == "windows" {
-			fmt.Printf("Download the latest release from:\n  https://github.com/konet-io/konet-cli/releases/latest\n")
+			fmt.Printf("Download the latest release from:\n  https://github.com/raucheacho/konet/konet-cli/releases/latest\n")
 			return nil
 		}
 
 		fmt.Println("Installing update...")
 		script, err := downloadScript(upgradeScriptURL)
 		if err != nil {
-			fmt.Printf("Auto-update failed. Please visit:\n  https://github.com/konet-io/konet-cli/releases/latest\n")
+			fmt.Printf("Auto-update failed. Please visit:\n  https://github.com/raucheacho/konet/konet-cli/releases/latest\n")
 			return nil
 		}
 

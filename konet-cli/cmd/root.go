@@ -14,7 +14,7 @@ var rootCmd = &cobra.Command{
 It manages a Phoenix-based WebSocket server with channels,
 presence tracking, and JWT authentication.
 
-Documentation: https://konet.io`,
+Documentation: https://github.com/raucheacho/konet`,
 	Version: "0.1.0",
 }
 

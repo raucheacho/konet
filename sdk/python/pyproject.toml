@@ -1,9 +1,9 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "konet-py"
+name = "konet"
 version = "0.1.0"
 description = "Python SDK for Konet realtime infrastructure"
 readme = "README.md"
