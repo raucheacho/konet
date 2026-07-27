@@ -31,8 +31,11 @@ WebSocket channels, presence tracking, and broadcast — packaged as a single Do
 | Self-hosted | ✅ Docker-native |
 | Channels | ✅ Pub/sub rooms |
 | Presence | ✅ Online tracking |
-| JWT Auth | ✅ Built-in |
-| Rate Limiting | ✅ Per-socket |
+| Broadcast | ✅ Ephemeral + optional history replay |
+| JWT Auth | ✅ Built-in, per-channel scoping |
+| Rate Limiting | ✅ Per-socket + per-IP |
+| Webhooks | ✅ Lifecycle events, HMAC-signed |
+| Metrics | ✅ Prometheus `/metrics` |
 | Admin Dashboard | ✅ LiveView Studio |
 
 ## Quick Start
@@ -41,8 +44,9 @@ WebSocket channels, presence tracking, and broadcast — packaged as a single Do
 # 1. Install
 brew install raucheacho/tap/konet
 
-# 2. Initialize
+# 2. Initialize & generate keys
 konet init
+konet keys generate
 
 # 3. Start
 konet start

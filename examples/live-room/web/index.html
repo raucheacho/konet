@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Konet · Live Room</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <!-- Connect gate -->
+    <dialog id="gate" open>
+      <form id="gate-form" method="dialog">
+        <h1>Konet <span>Live Room</span></h1>
+        <p class="muted">
+          A multiplayer room powered by Konet — live cursors, presence, flying
+          reactions and chat, all over WebSockets with no database.
+        </p>
+        <label>
+          Server URL
+          <input id="url" value="ws://localhost:4000/socket" spellcheck="false" />
+        </label>
+        <label>
+          Token (anon_key)
+          <input id="token" placeholder="paste your anon_key" spellcheck="false" />
+          <small class="muted">
+            Get it with <code>konet keys generate</code> or from Studio → Keys.
+          </small>
+        </label>
+        <label>
+          Your name
+          <input id="name" spellcheck="false" />
+        </label>
+        <button id="enter" type="submit">Enter the room →</button>
+        <p id="gate-error" class="error" hidden></p>
+      </form>
+    </dialog>
+
+    <!-- App -->
+    <header id="bar" hidden>
+      <div class="brand">Konet <span>Live Room</span></div>
+      <div class="who" id="who"></div>
+      <div class="online">
+        <span class="dot"></span>
+        <span id="count">0</span> online
+      </div>
+      <a class="studio" href="http://localhost:4000/studio" target="_blank" rel="noreferrer">Studio ↗</a>
+    </header>
+
+    <main id="stage" hidden>
+      <div id="cursors"></div>
+      <div id="reactions"></div>
+      <div id="hint">Move your cursor · click an emoji to react · say hi below</div>
+    </main>
+
+    <div id="dock" hidden>
+      <div class="emojis" id="emojis"></div>
+      <form id="chat-form">
+        <input id="chat-input" placeholder="Say something…" maxlength="240" autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+      <div class="feed" id="feed"></div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
