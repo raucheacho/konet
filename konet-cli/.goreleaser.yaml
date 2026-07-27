@@ -25,13 +25,13 @@ builds:
 archives:
   - id: default
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
-        format: zip
+      - formats: [zip]
     files:
-      - src: ../LICENSE
-      - src: ../README.md
+      - LICENSE
+      - README.md
 
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
@@ -52,7 +52,7 @@ release:
     owner: raucheacho
     name: konet
 
-brews:
+homebrew_casks:
   - name: konet
     repository:
       owner: raucheacho
@@ -61,10 +61,10 @@ brews:
     homepage: "https://github.com/raucheacho/konet"
     description: "Konet — realtime infrastructure engine"
     license: "MIT"
-    install: |
-      bin.install "konet"
-    test: |
-      system "#{bin}/konet", "--version"
+    hooks:
+      post:
+        install: |
+          bin.install "konet"
 
 scoops:
   - name: konet
