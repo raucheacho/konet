@@ -1,0 +1,5 @@
+web/node_modules/
+web/dist/
+agent/.venv/
+__pycache__/
+*.pyc

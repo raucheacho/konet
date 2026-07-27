@@ -1,0 +1,8 @@
+[project]
+name = "agent"
+version = "0.1.0"
+description = "Konet Live Room — Python bot agent"
+requires-python = ">=3.11"
+dependencies = [
+    "konet>=0.1.4",
+]

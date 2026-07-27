@@ -8,8 +8,8 @@ services:
     image: ghcr.io/raucheacho/konet:latest
     container_name: konet-server
     restart: unless-stopped
-    ports:
-      - "${KONET_PORT:-4000}:4000"
+    expose:
+      - "${KONET_PORT}"
     environment:
       MIX_ENV: prod
       PHX_SERVER: "true"
