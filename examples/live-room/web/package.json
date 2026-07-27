@@ -1,0 +1,17 @@
+{
+  "name": "konet-live-room",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@raucheacho/konet-js": "file:../../../sdk/js"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}

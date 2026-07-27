@@ -8,8 +8,11 @@ Konet is a lightweight, self-hosted alternative to managed realtime services. It
 
 - **Channels** — pub/sub over WebSockets with room scoping  
 - **Presence** — track who is online, with metadata  
-- **JWT Auth** — stateless token validation built-in  
-- **Rate Limiting** — per-socket message throttling  
+- **Broadcast** — low-latency ephemeral events, with optional in-memory history replay for late joiners  
+- **JWT Auth** — stateless HMAC tokens, with per-channel scoping via token claims  
+- **Rate Limiting** — per-socket message and per-IP connection throttling  
+- **Webhooks** — POST channel/member lifecycle events to your backend, optionally HMAC-signed  
+- **Prometheus Metrics** — `/metrics` endpoint for connections, channels, and throughput  
 - **Studio Dashboard** — LiveView admin UI for monitoring, keys, and broadcast  
 
 ## Quick Start
@@ -20,8 +23,9 @@ Konet is a lightweight, self-hosted alternative to managed realtime services. It
 # Install the CLI
 brew install raucheacho/tap/konet
 
-# Initialize and start
+# Initialize, generate keys, and start
 konet init
+konet keys generate
 konet start
 
 # Open the studio
