@@ -79,6 +79,24 @@ defmodule KonetWeb.RoomChannel do
     {:reply, {:ok, Presence.list(socket)}, socket}
   end
 
+  # Anything the clauses above don't understand — a typo'd event, a malformed
+  # "broadcast" payload, or a binary frame (the transport decodes those into a
+  # {:binary, data} payload that matches no clause here) — used to raise
+  # FunctionClauseError, which takes the channel process down and drops the
+  # client's connection. A client sending one bad frame should get an error
+  # back, not lose its socket.
+  def handle_in(event, payload, socket) do
+    log_event("unhandled_in", %{room: socket.assigns[:room_id], event: event})
+    {:reply, {:error, %{reason: unsupported_reason(payload), event: event}}, socket}
+  end
+
+  # Konet speaks JSON today. The Phoenix transport already handles binary
+  # frames both ways, so supporting them is a broadcast-path change rather
+  # than a transport one — until then, say so explicitly instead of reporting
+  # a binary frame as an unknown event.
+  defp unsupported_reason({:binary, _data}), do: "binary_unsupported"
+  defp unsupported_reason(_payload), do: "unsupported_event"
+
   @impl true
   def terminate(_reason, socket) do
     Metrics.connection_closed()
