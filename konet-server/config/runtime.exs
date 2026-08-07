@@ -60,6 +60,14 @@ if config_env() == :dev do
         "dev-secret-key-base-not-for-production-change-this-now-must-be-64-chars-minimum!!"
       )
 
+  # KONET_JWT_SECRET is honoured in dev too, falling back to the value in
+  # dev.exs. Without this, running the server from source against a backend
+  # that mints its own tokens refuses every connection — and says only
+  # "REFUSED CONNECTION", which is a long way from "the secrets differ".
+  if secret = System.get_env("KONET_JWT_SECRET") do
+    config :konet, jwt_secret: secret
+  end
+
   config :konet,
     studio_password: System.get_env("KONET_STUDIO_PASSWORD"),
     rate_limit_messages: parse_int.("KONET_RATE_LIMIT", 60),
