@@ -31,6 +31,10 @@ func (f phxFrame) toWire() []interface{} {
 // EventHandler handles an incoming event payload.
 type EventHandler func(payload interface{})
 
+// BinaryHandler handles an incoming binary frame. The slice is only valid for
+// the duration of the call — copy it to keep it.
+type BinaryHandler func(data []byte)
+
 // Channel represents a subscription to a Konet channel topic.
 type Channel struct {
 	topic string
@@ -40,19 +44,32 @@ type Channel struct {
 	handlers map[string][]EventHandler
 	replies  map[string]chan interface{}
 
-	sendFn  func(phxFrame) error
-	nextRef func() string
-	joinRef *string
+	sendFn       func(phxFrame) error
+	sendBinaryFn func(joinRef, ref, topic, event string, data []byte) error
+	nextRef      func() string
+	joinRef      *string
+
+	// binaryHandlers are separate from handlers because a binary event
+	// delivers []byte, not a decoded payload, and mixing the two would force
+	// every handler to type-switch on something it already knows.
+	binaryHandlers map[string][]BinaryHandler
 }
 
-func newChannel(topic string, sendFn func(phxFrame) error, nextRef func() string) *Channel {
+func newChannel(
+	topic string,
+	sendFn func(phxFrame) error,
+	sendBinaryFn func(joinRef, ref, topic, event string, data []byte) error,
+	nextRef func() string,
+) *Channel {
 	return &Channel{
-		topic:    topic,
-		state:    channelIdle,
-		handlers: make(map[string][]EventHandler),
-		replies:  make(map[string]chan interface{}),
-		sendFn:   sendFn,
-		nextRef:  nextRef,
+		topic:          topic,
+		state:          channelIdle,
+		handlers:       make(map[string][]EventHandler),
+		binaryHandlers: make(map[string][]BinaryHandler),
+		replies:        make(map[string]chan interface{}),
+		sendFn:         sendFn,
+		sendBinaryFn:   sendBinaryFn,
+		nextRef:        nextRef,
 	}
 }
 
@@ -165,6 +182,153 @@ func (c *Channel) Send(event string, payload interface{}) error {
 		Event:   "broadcast",
 		Payload: map[string]interface{}{"event": event, "payload": payload},
 	})
+}
+
+// SendBinary sends a binary frame — audio, or anything else at a media rate.
+//
+// Three things differ from Send, and all follow from the rate: Phoenix frames
+// it natively instead of base64 inside JSON, the server never acknowledges it,
+// and it is refused unless this client holds the channel's floor. Take the
+// floor with AcquireFloor first.
+//
+// data is copied into the frame, so the caller may reuse its buffer at once.
+func (c *Channel) SendBinary(event string, data []byte) error {
+	c.mu.RLock()
+	state := c.state
+	jr := c.joinRef
+	c.mu.RUnlock()
+
+	if state != channelJoined {
+		return fmt.Errorf("channel %s is not joined", c.topic)
+	}
+
+	joinRef := ""
+	if jr != nil {
+		joinRef = *jr
+	}
+
+	// Not tracked like Send: at fifty frames a second, a reply channel per
+	// frame would cost more than the frames do.
+	return c.sendBinaryFn(joinRef, c.nextRef(), c.topic, event, data)
+}
+
+// OnBinary registers a handler for binary frames on this event. Returns a
+// function that removes it.
+func (c *Channel) OnBinary(event string, handler BinaryHandler) func() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.binaryHandlers[event] = append(c.binaryHandlers[event], handler)
+	index := len(c.binaryHandlers[event]) - 1
+
+	return func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		list := c.binaryHandlers[event]
+		if index < len(list) {
+			c.binaryHandlers[event] = append(list[:index], list[index+1:]...)
+		}
+	}
+}
+
+// AcquireFloor claims the right to send on this channel. At most one member
+// holds it at a time, which is how half-duplex media — push-to-talk — is
+// arbitrated. Returns the holder, which is this client on success; an error
+// names whoever already holds it.
+func (c *Channel) AcquireFloor(ctx context.Context) (string, error) {
+	response, err := c.request(ctx, "konet:floor_acquire")
+	if err != nil {
+		return "", err
+	}
+
+	var reply struct {
+		Holder string `json:"holder"`
+	}
+	if err := MarshalPayload(response, &reply); err != nil {
+		return "", err
+	}
+	return reply.Holder, nil
+}
+
+// ReleaseFloor gives the floor back. Only the holder may.
+func (c *Channel) ReleaseFloor(ctx context.Context) error {
+	_, err := c.request(ctx, "konet:floor_release")
+	return err
+}
+
+// request is a push that expects a reply, unlike the fire-and-forget Send.
+func (c *Channel) request(ctx context.Context, event string) (interface{}, error) {
+	c.mu.RLock()
+	state := c.state
+	jr := c.joinRef
+	c.mu.RUnlock()
+
+	if state != channelJoined {
+		return nil, fmt.Errorf("channel %s is not joined", c.topic)
+	}
+
+	ref := c.nextRef()
+	replies := make(chan interface{}, 1)
+
+	c.mu.Lock()
+	c.replies[ref] = replies
+	c.mu.Unlock()
+
+	if err := c.sendFn(phxFrame{
+		JoinRef: jr,
+		Ref:     &ref,
+		Topic:   c.topic,
+		Event:   event,
+		Payload: map[string]interface{}{},
+	}); err != nil {
+		c.mu.Lock()
+		delete(c.replies, ref)
+		c.mu.Unlock()
+		return nil, err
+	}
+
+	select {
+	case payload := <-replies:
+		var reply struct {
+			Status   string      `json:"status"`
+			Response interface{} `json:"response"`
+		}
+		if err := MarshalPayload(payload, &reply); err != nil {
+			return nil, err
+		}
+		if reply.Status != "ok" {
+			var refusal struct {
+				Reason string `json:"reason"`
+				Holder string `json:"holder"`
+			}
+			_ = MarshalPayload(reply.Response, &refusal)
+			if refusal.Holder != "" {
+				return nil, fmt.Errorf("konet: %s (détenue par %s)", refusal.Reason, refusal.Holder)
+			}
+			return nil, fmt.Errorf("konet: %s refusé (%s)", event, refusal.Reason)
+		}
+		return reply.Response, nil
+
+	case <-ctx.Done():
+		c.mu.Lock()
+		delete(c.replies, ref)
+		c.mu.Unlock()
+		return nil, ctx.Err()
+	}
+}
+
+// receiveBinary dispatches an incoming binary frame.
+func (c *Channel) receiveBinary(event string, data []byte) {
+	c.mu.RLock()
+	handlers := append([]BinaryHandler{}, c.binaryHandlers[event]...)
+	c.mu.RUnlock()
+
+	// Synchronous, unlike receive: audio frames must reach the play-out buffer
+	// in the order they arrived, and one goroutine per frame would not promise
+	// that.
+	for _, h := range handlers {
+		h(data)
+	}
 }
 
 func (c *Channel) receive(frame phxFrame) {
