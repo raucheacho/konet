@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   konet-server:
     build:
@@ -8,8 +6,8 @@ services:
     image: ghcr.io/raucheacho/konet:latest
     container_name: konet-server
     restart: unless-stopped
-    expose:
-      - "${KONET_PORT}"
+    ports:
+      - "${KONET_PORT:-4000}:4000"
     environment:
       MIX_ENV: prod
       PHX_SERVER: "true"

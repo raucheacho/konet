@@ -79,6 +79,30 @@ jobs:
           node-version: 20
 
       - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  sdk-react-native:
+    name: SDK (React Native)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/react-native
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # The core is a peer dependency resolved from the sibling package (see
+      # this package's tsconfig "paths" and vitest alias), not from npm — where
+      # the matching version only appears once the release tag publishes it.
+      # --legacy-peer-deps stops npm trying to fetch a peer that is right here.
+      - run: npm ci --legacy-peer-deps
+      - run: npm run typecheck
+      - run: npm test
       - run: npm run build
 
   sdk-python:

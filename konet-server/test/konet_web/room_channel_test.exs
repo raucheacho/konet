@@ -63,6 +63,37 @@ defmodule KonetWeb.RoomChannelTest do
     end
   end
 
+  describe "unsupported input" do
+    test "replies with an error instead of crashing on an unknown event" do
+      socket = connect_with(%{"sub" => "sender"})
+      {:ok, _, socket} = subscribe_and_join(socket, "room:unknown-event")
+
+      ref = push(socket, "not_a_konet_event", %{"n" => 1})
+      assert_reply ref, :error, %{reason: "unsupported_event", event: "not_a_konet_event"}
+
+      # The channel must still be usable afterwards.
+      push(socket, "broadcast", %{"event" => "ping", "payload" => %{"n" => 1}})
+      assert_broadcast "ping", %{"n" => 1}
+    end
+
+    test "replies with an error instead of crashing on a malformed broadcast" do
+      socket = connect_with(%{"sub" => "sender"})
+      {:ok, _, socket} = subscribe_and_join(socket, "room:malformed")
+
+      ref = push(socket, "broadcast", %{"missing" => "event and payload"})
+      assert_reply ref, :error, %{reason: "unsupported_event"}
+    end
+
+    test "names binary frames explicitly rather than crashing" do
+      socket = connect_with(%{"sub" => "sender"})
+      {:ok, _, socket} = subscribe_and_join(socket, "room:binary")
+
+      # What Phoenix's v2 serializer hands the channel for a binary frame.
+      ref = push(socket, "audio", {:binary, <<1, 2, 3>>})
+      assert_reply ref, :error, %{reason: "binary_unsupported", event: "audio"}
+    end
+  end
+
   describe "history replay" do
     test "late joiner receives buffered messages" do
       Application.put_env(:konet, :history_limit, 5)

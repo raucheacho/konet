@@ -55,6 +55,7 @@ docker-compose.override.yml
 # ------------------------------------------------------------
 .env
 .env.*
+.envrc
 !.env.example
 *.secret
 *.pem
