@@ -1,0 +1,28 @@
+{
+  "name": "@raucheacho/konet-rn",
+  "version": "0.1.0",
+  "description": "React Native client for Konet realtime infrastructure",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "react-native": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --external @raucheacho/konet-js --external react-native",
+    "dev": "npm run build -- --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": ["react-native", "expo", "websocket", "realtime", "konet", "channels"],
+  "license": "MIT",
+  "peerDependencies": {
+    "@raucheacho/konet-js": ">=0.2.0",
+    "react-native": ">=0.70"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

@@ -62,6 +62,7 @@ docker run -d --name konet -p 4000:4000 \
 | Language | Package | Status |
 |----------|---------|--------|
 | JavaScript | `@raucheacho/konet-js` | ✅ |
+| React Native | `@raucheacho/konet-rn` | ✅ |
 | Go | `github.com/raucheacho/konet/sdk/go` | ✅ |
 | Python | `konet` | ✅ |
 

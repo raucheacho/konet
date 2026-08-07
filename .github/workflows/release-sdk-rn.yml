@@ -1,0 +1,44 @@
+name: Release SDK — React Native
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/react-native
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org/
+
+      # The peer range on @raucheacho/konet-js is ">=", not a caret, so it stays
+      # valid at every tag and needs no rewriting here — unlike the version
+      # field, which the tag owns.
+      #
+      # The build resolves the core from the sibling package (tsconfig "paths")
+      # and marks it external, so it never needs the core to be on npm. That
+      # matters: release-sdk-js.yml publishes it from the same tag, in parallel.
+      - name: Install and Build
+        run: |
+          npm version ${GITHUB_REF_NAME#v} --no-git-tag-version
+          npm ci --legacy-peer-deps
+          npm run build
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

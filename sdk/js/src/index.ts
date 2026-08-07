@@ -1,7 +1,7 @@
 export { KonetClient } from "./client.js";
 export type { KonetClientOptions } from "./client.js";
 export { Channel } from "./channel.js";
-export type { ChannelState } from "./channel.js";
+export type { ChannelState, KonetSendError } from "./channel.js";
 export { Presence } from "./presence.js";
 export type { PresenceMeta, PresenceEntry, PresenceMap, PresenceHandler } from "./presence.js";
 

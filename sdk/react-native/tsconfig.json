@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "declaration": true,
+    "outDir": "dist",
+    "lib": ["ES2017", "DOM"],
+    "baseUrl": ".",
+    "paths": {
+      // Resolve the core from the sibling package while developing in the
+      // monorepo. It stays a peer dependency at runtime: the build marks it
+      // external (see the "build" script) so it is never inlined here.
+      "@raucheacho/konet-js": ["../js/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}
