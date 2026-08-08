@@ -10,8 +10,8 @@ When a user joins a channel, the server automatically tracks them via `Phoenix.P
 
 Default metadata includes:
 
-- `online_at` — Unix timestamp
-- `room` — channel topic
+- `online_at` — Unix timestamp (seconds)
+- `room` — the room id, without the `room:` prefix
 - `role` — from JWT claims
 
 You can extend metadata by customizing the `after_join` handler in `KonetWeb.RoomChannel`.

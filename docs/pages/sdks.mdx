@@ -1,3 +1,5 @@
+import { Cards, Card } from 'nextra/components'
+
 # SDKs
 
 Konet provides first-party SDKs for Go, JavaScript/TypeScript, React Native and
@@ -27,6 +29,9 @@ All SDKs share the same mental model:
   </Card>
 </Cards>
 
+React Native is a thin layer over the JavaScript core — same API, plus
+`AppState` wiring. It is listed separately below only where it differs.
+
 ## Common Interface
 
 | Operation | JavaScript | Go | Python |
@@ -36,4 +41,21 @@ All SDKs share the same mental model:
 | Subscribe | `await channel.subscribe()` | `ch.Subscribe(ctx)` | `await channel.subscribe()` |
 | Send | `channel.send(event, payload)` | `ch.Send(event, payload)` | `await channel.send(event, payload)` |
 | Listen | `channel.on(event, handler)` | `ch.On(event, handler)` | `channel.on(event, handler)` |
-| Presence | `channel.getPresence()` | — | — |
+| Unsubscribe | `await channel.unsubscribe()` | `ch.Unsubscribe()` | `await channel.unsubscribe()` |
+| Disconnect | `client.disconnect()` | `c.Disconnect()` | `await client.disconnect()` |
+
+## Feature Support
+
+| Feature | JavaScript | React Native | Go | Python |
+|---------|:---:|:---:|:---:|:---:|
+| Channels & broadcast | ✅ | ✅ | ✅ | ✅ |
+| Auto-reconnect & re-join | ✅ | ✅ | ✅ | ✅ |
+| [Presence helper](/reference/presence) | ✅ | ✅ | raw events | raw events |
+| [History replay](/reference/channels#history-replay) | ✅ | ✅ | ✅ | ✅ |
+| [Binary frames](/reference/binary) | ✅ | ✅ | ✅ | ✅ |
+| [Floor control](/reference/binary#floor-control) | ✅ | ✅ | ✅ | ✅ |
+| Lifecycle recovery | `checkConnection()` | automatic | — | — |
+
+"raw events" means the SDK delivers `presence_state` / `presence_diff` to your
+own handler instead of merging them for you — see
+[Presence](/reference/presence).

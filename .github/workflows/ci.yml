@@ -119,3 +119,20 @@ jobs:
           python-version: "3.12"
 
       - run: python -m compileall konet
+
+  docs:
+    name: Docs (Nextra)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      # A static export, so a bad MDX link or a component used without an
+      # import fails the build instead of shipping a broken page.
+      - run: bun run build

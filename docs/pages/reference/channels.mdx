@@ -58,7 +58,7 @@ channel.unsubscribe()
 
 Rooms are open by default: any client connecting with a valid token can join any `room:*` topic. This is fine for public channels.
 
-To make a channel private, mint the client's token with a `channels` claim (see [Authentication](/api/authentication#scoping-a-token-to-specific-channels)) listing the topics it may join. Entries may end in `*` for prefix matching — `room:user-42:*` covers every room under that namespace. Joining any other topic returns:
+To make a channel private, mint the client's token with a `channels` claim (see [Authentication](/reference/authentication#scoping-a-token-to-specific-channels)) listing the topics it may join. Entries may end in `*` for prefix matching — `room:user-42:*` covers every room under that namespace. Joining any other topic returns:
 
 ```json
 { "status": "error", "response": { "reason": "unauthorized" } }
@@ -80,7 +80,7 @@ This is a replay buffer, not storage — it survives an empty room (an agent can
 
 A channel also carries binary frames, for anything at a media rate — audio, in
 practice. They come with floor control, which decides who is allowed to send.
-See [Binary Frames & Floor Control](/api/binary).
+See [Binary Frames & Floor Control](/reference/binary).
 
 ## Rate Limiting
 
@@ -90,4 +90,4 @@ Each socket may send up to `KONET_RATE_LIMIT` broadcasts per second (default 60)
 { "status": "error", "response": { "reason": "rate_limited" } }
 ```
 
-Binary frames have a separate budget — see [Binary Frames & Floor Control](/api/binary#rate-limiting).
+Binary frames have a separate budget — see [Binary Frames & Floor Control](/reference/binary#rate-limiting).

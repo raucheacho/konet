@@ -1,11 +1,9 @@
 import { DocsThemeConfig } from 'nextra-theme-docs'
 
 const config: DocsThemeConfig = {
-  logo: (
-    <span style={{ fontWeight: 800, fontSize: '1.25rem', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #7c6af7, #a78bfa, #4ade80)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-      Konet
-    </span>
-  ),
+  // The gradient lives in styles.css so it can differ per theme — the dark
+  // ramp washes out on white.
+  logo: <span className="konet-logo">Konet</span>,
   project: {
     link: 'https://github.com/raucheacho/konet',
   },

@@ -2,10 +2,11 @@
   "name": "konet-docs",
   "version": "0.1.0",
   "private": true,
+  "comment": "Next 14's build workers break under the Bun runtime (they fail to resolve ./chunks/vendor-chunks/*), so the scripts pin node explicitly. Bun is still fine for `bun install` — bun.lock is the committed lockfile.",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
+    "dev": "node node_modules/next/dist/bin/next dev",
+    "build": "rm -rf .next out && node node_modules/next/dist/bin/next build",
+    "start": "node node_modules/next/dist/bin/next start"
   },
   "dependencies": {
     "next": "^14.2.0",

@@ -1,0 +1,136 @@
+import { Callout } from 'nextra/components'
+
+# API Reference
+
+Konet exposes two surfaces: a **WebSocket API** built on Phoenix Channels, which
+is what your clients use, and a small **HTTP admin API** for your own backend
+and for monitoring.
+
+## In this section
+
+- [Authentication](/reference/authentication) — JWT claims, key roles, per-channel scoping
+- [Channels](/reference/channels) — join, broadcast, leave, history replay
+- [Presence](/reference/presence) — tracking and metadata
+- [Binary Frames & Floor Control](/reference/binary) — media-rate transport and turn-taking
+
+## WebSocket
+
+| | |
+|---|---|
+| Endpoint | `ws://host:4000/socket` (`wss://` behind TLS) |
+| Protocol | Phoenix Channels, v2 |
+| Topics | `room:<id>` — joined dynamically, no pre-registration |
+| Auth | `token` connection parameter |
+
+Channel messages are JSON:
+
+```json
+{
+  "event": "broadcast",
+  "payload": { "text": "hi" },
+  "ref": "1"
+}
+```
+
+Binary frames use Phoenix's own framing instead, which is what makes them
+usable at a media rate — see [Binary Frames & Floor Control](/reference/binary).
+
+Pass the JWT as a connection parameter; it must be signed with
+`KONET_JWT_SECRET`:
+
+```json
+{ "token": "<jwt>" }
+```
+
+Origin is checked against `KONET_ALLOWED_ORIGINS` before the upgrade completes.
+
+## HTTP
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `GET` | `/` | public | Server name, version, status |
+| `GET` | `/api/health` | public | Health check — used by the image's Docker healthcheck |
+| `GET` | `/api/channels` | service key | Active channels + subscriber counts |
+| `GET` | `/api/presence/:channel` | service key | Presence for one channel |
+| `POST` | `/api/broadcast` | service key | Broadcast into a channel from your backend |
+| `GET` | `/api/metrics` | service key | Metrics as JSON |
+| `GET` | `/metrics` | service key | Metrics in Prometheus text format |
+
+Protected routes take the service key as a bearer token:
+
+```
+Authorization: Bearer <service_key>
+```
+
+A missing or non-`service` token returns `401` with `{ "error": "..." }`.
+
+<Callout type="warning">
+Paths take the channel **without** the `room:` prefix — the server adds it.
+Use `lobby`, not `room:lobby`. This matches `konet publish lobby '{...}'`.
+</Callout>
+
+### `GET /api/health`
+
+```json
+{ "status": "ok", "version": "0.1.0", "connections": 12, "uptime_seconds": 3841 }
+```
+
+### `GET /api/channels`
+
+```json
+{ "channels": [{ "id": "lobby", "subscribers": 3 }] }
+```
+
+### `GET /api/presence/:channel`
+
+```bash
+curl -H "Authorization: Bearer $KONET_SERVICE_KEY" \
+  http://localhost:4000/api/presence/lobby
+```
+
+```json
+{
+  "channel": "lobby",
+  "count": 1,
+  "presence": [
+    { "user_id": "user_123", "metas": [{ "online_at": 1754640000, "room": "lobby", "role": "anon" }] }
+  ]
+}
+```
+
+### `POST /api/broadcast`
+
+Lets a backend push into a room without holding a socket open. The broadcast is
+recorded in [history](/reference/channels#history-replay) like any other.
+
+```bash
+curl -X POST http://localhost:4000/api/broadcast \
+  -H "Authorization: Bearer $KONET_SERVICE_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"channel":"lobby","event":"notification","payload":{"text":"Deploy finished"}}'
+```
+
+```json
+{ "ok": true, "channel": "lobby", "event": "notification" }
+```
+
+All three fields — `channel`, `event`, `payload` — are required.
+
+### `GET /api/metrics`
+
+```json
+{
+  "connections": 12,
+  "messages_total": 91234,
+  "messages_per_second": 47,
+  "uptime_seconds": 3841,
+  "channels": 5
+}
+```
+
+### `GET /metrics`
+
+The same numbers in Prometheus text format: `konet_connections`,
+`konet_channels`, `konet_messages_total`, `konet_messages_per_second`,
+`konet_uptime_seconds`. Scrape it with `bearer_token` set to your service key —
+see [Configuration](/server/configuration#monitoring).

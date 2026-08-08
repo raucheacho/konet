@@ -9,6 +9,7 @@ Konet is a lightweight, self-hosted alternative to managed realtime services. It
 - **Channels** — pub/sub over WebSockets with room scoping  
 - **Presence** — track who is online, with metadata  
 - **Broadcast** — low-latency ephemeral events, with optional in-memory history replay for late joiners  
+- **Binary frames** — media-rate transport with floor control, for push-to-talk and half-duplex audio  
 - **JWT Auth** — stateless HMAC tokens, with per-channel scoping via token claims  
 - **Rate Limiting** — per-socket message and per-IP connection throttling  
 - **Webhooks** — POST channel/member lifecycle events to your backend, optionally HMAC-signed  
@@ -68,13 +69,22 @@ docker run -d --name konet -p 4000:4000 \
 
 ## Documentation
 
-Full docs live in [`./docs`](./docs). To run them locally:
+Published at **https://raucheacho.github.io/konet/**, built from [`./docs`](./docs)
+— a Nextra site deployed to GitHub Pages on every push to `main`.
+
+To run it locally:
 
 ```bash
 cd docs
-npm install
-npm run dev
+bun install
+bun run dev        # http://localhost:3000
 ```
+
+`bun run build` produces a static export in `docs/out/`. CI builds it on every
+push, so a broken page fails the build rather than shipping.
+
+The deploy sets `NEXT_PUBLIC_BASE_PATH` because a project site is served under
+`/konet`. Locally it is unset, so the dev server stays at `/`.
 
 ## License
 

@@ -1,6 +1,32 @@
 @import 'nextra-theme-docs/style.css';
 
+/* Nextra/next-themes puts `class="dark"` on <html>, and the theme's own
+   components (callouts, cards, search, tabs) are styled with Tailwind `dark:`
+   variants that key off it. So the palette below has to key off it too —
+   overriding colours unconditionally is what leaves light callouts sitting on
+   a dark page. Every rule in this file reads these variables; nothing
+   hardcodes a colour. */
+
 :root {
+  --konet-bg: #ffffff;
+  --konet-surface: #f7f7fb;
+  --konet-border: #e4e4ee;
+  --konet-accent: #5b3fd6;
+  --konet-accent2: #15803d;
+  --konet-accent3: #c2410c;
+  --konet-text: #16162a;
+  --konet-muted: #5c5c78;
+  --konet-red: #dc2626;
+  --konet-blue: #0369a1;
+  --konet-code-bg: #f7f7fb;
+  --konet-nav-bg: rgba(255, 255, 255, 0.8);
+  --konet-accent-soft: rgba(91, 63, 214, 0.08);
+  --konet-accent-softer: rgba(91, 63, 214, 0.04);
+  --konet-accent-active: rgba(91, 63, 214, 0.12);
+  --konet-accent-hover-border: rgba(91, 63, 214, 0.4);
+}
+
+html.dark {
   --konet-bg: #0a0a0f;
   --konet-surface: #111118;
   --konet-border: #1e1e2e;
@@ -12,6 +38,28 @@
   --konet-red: #f87171;
   --konet-blue: #38bdf8;
   --konet-code-bg: #0d0d16;
+  --konet-nav-bg: rgba(10, 10, 15, 0.8);
+  --konet-accent-soft: rgba(124, 106, 247, 0.08);
+  --konet-accent-softer: rgba(124, 106, 247, 0.04);
+  --konet-accent-active: rgba(124, 106, 247, 0.12);
+  --konet-accent-hover-border: rgba(124, 106, 247, 0.4);
+}
+
+.konet-logo {
+  font-weight: 800;
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, #5b3fd6, #7c5cf0, #15803d);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+html.dark .konet-logo {
+  background: linear-gradient(135deg, #7c6af7, #a78bfa, #4ade80);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 body {
@@ -21,7 +69,7 @@ body {
 }
 
 .nextra-nav-container {
-  background: rgba(10, 10, 15, 0.8) !important;
+  background: var(--konet-nav-bg) !important;
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--konet-border) !important;
 }
@@ -43,12 +91,12 @@ body {
 .nextra-sidebar-container a:hover,
 .nextra-sidebar-container button:hover {
   color: var(--konet-text) !important;
-  background: rgba(124, 106, 247, 0.08) !important;
+  background: var(--konet-accent-soft) !important;
 }
 
 .nextra-sidebar-container .active > a {
   color: var(--konet-accent) !important;
-  background: rgba(124, 106, 247, 0.12) !important;
+  background: var(--konet-accent-active) !important;
 }
 
 article {
@@ -73,22 +121,45 @@ article a:hover {
   text-decoration: underline;
 }
 
+/* Cards carry their own border and hover state from the theme; leaving the
+   link colour to them keeps the title from turning accent-on-accent. */
+article .nextra-card,
+article .nextra-card:hover {
+  color: inherit !important;
+}
+
 code,
 kbd,
 pre {
   font-family: 'JetBrains Mono', monospace !important;
+}
+
+/* Inline code only. Inside a block, Nextra resets the inner <code> to a
+   transparent, padding-less grid and puts the horizontal padding on each
+   `.line` instead — that is what keeps the background spanning the full width
+   when a long line scrolls. Bordering that inner element (as `code` alone did)
+   drew a stray box flush against the <pre> edges while the text sat 1rem in,
+   which is the padding that looked wrong. */
+:not(pre) > code,
+kbd {
+  background: var(--konet-code-bg) !important;
+  border: 1px solid var(--konet-border) !important;
+  border-radius: 6px !important;
+  padding: 0.15em 0.35em;
+}
+
+pre {
   background: var(--konet-code-bg) !important;
   border: 1px solid var(--konet-border) !important;
   border-radius: 8px !important;
 }
 
-pre {
-  background: var(--konet-code-bg) !important;
-}
-
-.nextra-code-block pre {
-  background: var(--konet-code-bg) !important;
-  border: 1px solid var(--konet-border) !important;
+/* Callouts set their own tinted background in both themes — a code span inside
+   one must not punch a slab of page-surface through it. */
+.nextra-callout code {
+  background: transparent !important;
+  border-color: currentColor !important;
+  opacity: 0.9;
 }
 
 table {
@@ -109,7 +180,7 @@ td {
 }
 
 tr:hover td {
-  background: rgba(124, 106, 247, 0.04) !important;
+  background: var(--konet-accent-softer) !important;
 }
 
 .nextra-breadcrumb {
@@ -147,21 +218,21 @@ tr:hover td {
 }
 
 .badge-green {
-  background: rgba(74, 222, 128, 0.12);
+  background: color-mix(in srgb, var(--konet-accent2) 12%, transparent);
   color: var(--konet-accent2);
-  border: 1px solid rgba(74, 222, 128, 0.25);
+  border: 1px solid color-mix(in srgb, var(--konet-accent2) 25%, transparent);
 }
 
 .badge-purple {
-  background: rgba(124, 106, 247, 0.12);
+  background: var(--konet-accent-active);
   color: var(--konet-accent);
-  border: 1px solid rgba(124, 106, 247, 0.25);
+  border: 1px solid color-mix(in srgb, var(--konet-accent) 25%, transparent);
 }
 
 .badge-orange {
-  background: rgba(251, 146, 60, 0.12);
+  background: color-mix(in srgb, var(--konet-accent3) 12%, transparent);
   color: var(--konet-accent3);
-  border: 1px solid rgba(251, 146, 60, 0.25);
+  border: 1px solid color-mix(in srgb, var(--konet-accent3) 25%, transparent);
 }
 
 /* Cards */
@@ -174,7 +245,7 @@ tr:hover td {
 }
 
 .card:hover {
-  border-color: rgba(124, 106, 247, 0.4);
+  border-color: var(--konet-accent-hover-border);
   transform: translateY(-2px);
 }
 
