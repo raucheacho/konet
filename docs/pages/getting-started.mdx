@@ -52,7 +52,8 @@ only) back into `konet.config.toml`.
 konet start
 ```
 
-The first start pulls the `konet-server` image and boots the container.
+The first start pulls `ghcr.io/raucheacho/konet:latest` and boots the container.
+Later starts reuse the cached image.
 
 ## 4. Verify
 
@@ -141,8 +142,45 @@ func main() {
 }
 ```
 
+### React Native
+
+```bash
+npm install @raucheacho/konet-js @raucheacho/konet-rn
+```
+
+```ts
+import { createNativeClient } from '@raucheacho/konet-rn'
+
+const client = createNativeClient('ws://localhost:4000/socket', {
+  token: '<anon_key>',
+})
+
+const channel = client.channel('room:lobby')
+await channel.subscribe()
+
+channel.on('message', (payload) => console.log(payload))
+channel.send('message', { text: 'Hello Konet!' })
+```
+
+Same API as the JavaScript SDK, plus automatic reconnection when the app
+returns to the foreground — see [React Native](/sdks/react-native).
+
+On a physical device, `localhost` is the phone, not your machine: use your
+machine's LAN address (`ws://192.168.x.x:4000/socket`).
+
+## 6. Watch it happen
+
+Open the Studio and go to **Logs** to see joins, leaves, and broadcasts stream
+in as your client connects:
+
+```bash
+konet studio
+```
+
 ## Next Steps
 
-- Learn about [Server configuration](/server)
+- Run the [Live Room example](/examples) — cursors, presence, and chat in a few minutes
+- Learn about [Server configuration](/server/configuration)
+- [Deploy](/server/deployment) to a VPS, Coolify, or Dokploy
 - Explore [CLI commands](/cli)
-- Read the [API reference](/api)
+- Read the [API reference](/reference)

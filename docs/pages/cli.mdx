@@ -97,10 +97,22 @@ konet keys generate
 
 ### `konet upgrade`
 
-Pulls the latest server image and restarts the container.
+Upgrades the **CLI binary** itself: it checks the latest GitHub release and, if
+you are behind, re-runs the install script. On Windows it prints the release URL
+instead of self-updating.
 
 ```bash
 konet upgrade
+```
+
+It does not touch the server image. `konet start` only pulls
+`ghcr.io/raucheacho/konet:latest` when no copy is cached locally, so moving the
+server to a newer build is an explicit step:
+
+```bash
+konet stop
+docker pull ghcr.io/raucheacho/konet:latest
+konet start
 ```
 
 Commands that talk to a running server (`init`, `keys`, `channels`, `publish`,

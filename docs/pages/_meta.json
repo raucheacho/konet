@@ -1,0 +1,23 @@
+{
+  "index": {
+    "title": "Introduction",
+    "theme": {
+      "sidebar": true,
+      "breadcrumb": false
+    }
+  },
+  "getting-started": "Getting Started",
+  "server": "Server",
+  "cli": "CLI",
+  "sdks": "SDKs",
+  "reference": "API Reference",
+  "examples": "Examples",
+  "-- links": {
+    "type": "separator"
+  },
+  "github": {
+    "title": "GitHub ↗",
+    "href": "https://github.com/raucheacho/konet",
+    "newWindow": true
+  }
+}
