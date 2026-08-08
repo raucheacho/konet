@@ -1,4 +1,5 @@
 import { Channel } from "./channel.js";
+import { BROADCAST, decodeServerFrame, encodePush, PUSH } from "./binary.js";
 
 export interface KonetClientOptions {
   token: string;
@@ -75,6 +76,8 @@ export class KonetClient {
       topic,
       (msg) =>
         this.sendFrame([msg.joinRef, msg.ref, msg.topic, msg.event, msg.payload]),
+      (joinRef, ref, chanTopic, event, data) =>
+        this.sendBinary(joinRef, ref, chanTopic, event, data),
       () => String(++this.refCounter),
       () => this.ws?.readyState === WebSocket.OPEN
     );
@@ -157,7 +160,15 @@ export class KonetClient {
       this.flushSendBuffer();
     };
 
-    ws.onmessage = (ev) => this.handleFrame(ev.data);
+    // Binary frames arrive as ArrayBuffer rather than Blob, so they can be
+    // read synchronously — a Blob would force an async round trip per frame,
+    // fifty times a second, for nothing.
+    ws.binaryType = "arraybuffer";
+
+    ws.onmessage = (ev) =>
+      typeof ev.data === "string"
+        ? this.handleFrame(ev.data)
+        : this.handleBinaryFrame(ev.data as ArrayBuffer);
 
     ws.onclose = () => {
       if (this.ws !== ws) return;
@@ -206,6 +217,33 @@ export class KonetClient {
     if (ch) {
       ch._receive({ joinRef, ref, topic, event, payload });
     }
+  }
+
+  private handleBinaryFrame(buffer: ArrayBuffer): void {
+    const frame = decodeServerFrame(buffer);
+    if (frame === null) return;
+
+    // A binary reply means the server refused the frame; it is delivered on
+    // the same path as a text reply so callers have one place to look.
+    if (frame.kind !== BROADCAST && frame.kind !== PUSH) return;
+
+    this.channels.get(frame.topic)?._receiveBinary(frame.event, frame.data);
+  }
+
+  /**
+   * Binary frames are never buffered while the socket is down, unlike text.
+   * Replaying audio recorded seconds ago into a live channel would be worse
+   * than losing it — by the time it arrives, the moment has passed.
+   */
+  private sendBinary(
+    joinRef: string,
+    ref: string,
+    topic: string,
+    event: string,
+    data: Uint8Array
+  ): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(encodePush(joinRef, ref, topic, event, data));
   }
 
   private sendFrame(frame: PhxFrame): void {

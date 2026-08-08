@@ -39,6 +39,13 @@ export class Channel {
   private handlers: Map<string, EventHandler[]> = new Map();
   private presence: Presence = new Presence();
   private sendFn: (msg: PhxMessage) => void;
+  private sendBinaryFn: (
+    joinRef: string,
+    ref: string,
+    topic: string,
+    event: string,
+    data: Uint8Array
+  ) => void;
   private nextRef: () => string;
   private isOpen: () => boolean;
 
@@ -52,11 +59,19 @@ export class Channel {
   constructor(
     topic: string,
     sendFn: (msg: PhxMessage) => void,
+    sendBinaryFn: (
+      joinRef: string,
+      ref: string,
+      topic: string,
+      event: string,
+      data: Uint8Array
+    ) => void,
     nextRef: () => string,
     isOpen: () => boolean
   ) {
     this.topic = topic;
     this.sendFn = sendFn;
+    this.sendBinaryFn = sendBinaryFn;
     this.nextRef = nextRef;
     this.isOpen = isOpen;
   }
@@ -140,8 +155,75 @@ export class Channel {
     });
   }
 
+  /**
+   * Send a binary frame — audio, or anything else at a media rate.
+   *
+   * Different from `send()` in three ways that all follow from the rate:
+   * Phoenix frames it natively instead of base64 inside JSON, the server never
+   * acknowledges it, and it is refused unless this client holds the channel's
+   * floor. Take the floor with `acquireFloor()` first.
+   *
+   * `data` is copied into the frame, so the caller may reuse its buffer
+   * immediately — which the audio path does, every 20 ms.
+   */
+  sendBinary(event: string, data: Uint8Array): void {
+    if (this.state !== "joined") {
+      throw new Error(`Channel ${this.topic} is not joined`);
+    }
+    // Not tracked like send(): at fifty frames a second a reply tracker per
+    // frame would cost more than the frames do.
+    this.sendBinaryFn(this.joinRef!, this.nextRef(), this.topic, event, data);
+  }
+
+  /**
+   * Claim the right to send on this channel. At most one member holds it at a
+   * time, so this is how half-duplex media — push-to-talk — is arbitrated.
+   *
+   * Resolves with the holder, which is this client on success. Rejects when
+   * someone else already holds it, naming them so the UI can say who.
+   */
+  acquireFloor(): Promise<string> {
+    return this.request("konet:floor_acquire").then(
+      (response) => (response as { holder: string }).holder
+    );
+  }
+
+  releaseFloor(): Promise<void> {
+    return this.request("konet:floor_release").then(() => undefined);
+  }
+
+  /** A push that expects a reply, unlike the fire-and-forget `send()`. */
+  private request(event: string, payload: unknown = {}): Promise<unknown> {
+    if (this.state !== "joined") {
+      return Promise.reject(new Error(`Channel ${this.topic} is not joined`));
+    }
+
+    const ref = this.nextRef();
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.handlers.delete(`phx_reply:${ref}`);
+        reject(new Error(`${event} sans réponse`));
+      }, SEND_REPLY_GRACE_MS);
+
+      this.on(`phx_reply:${ref}`, (payload) => {
+        clearTimeout(timer);
+        const reply = payload as { status: string; response: unknown };
+        if (reply.status === "ok") resolve(reply.response);
+        else reject(new Error((reply.response as { reason?: string })?.reason ?? "refusé"));
+      });
+
+      this.sendFn({ joinRef: this.joinRef, ref, topic: this.topic, event, payload });
+    });
+  }
+
   getPresence(): Presence {
     return this.presence;
+  }
+
+  /** @internal a binary frame arrived for this topic */
+  _receiveBinary(event: string, data: Uint8Array): void {
+    this.emit(event, data);
   }
 
   /** @internal called by KonetClient when a message arrives for this topic */

@@ -9,6 +9,7 @@ defmodule Konet.Application do
       Konet.Metrics,
       Konet.ChannelRegistry,
       Konet.RateLimiter,
+      Konet.Floor,
       Konet.LogBuffer,
       Konet.History,
       {Task.Supervisor, name: Konet.TaskSupervisor},

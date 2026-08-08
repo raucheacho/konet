@@ -76,6 +76,12 @@ channel.on("konet:history", ({ messages }) => {
 
 This is a replay buffer, not storage — it survives an empty room (an agent can broadcast before anyone is listening) but not a server restart. It is off by default.
 
+## Binary Frames
+
+A channel also carries binary frames, for anything at a media rate — audio, in
+practice. They come with floor control, which decides who is allowed to send.
+See [Binary Frames & Floor Control](/api/binary).
+
 ## Rate Limiting
 
 Each socket may send up to `KONET_RATE_LIMIT` broadcasts per second (default 60), and each IP may open `KONET_CONN_RATE_LIMIT` connections per minute (default 200). Exceeding the message limit returns:
@@ -83,3 +89,5 @@ Each socket may send up to `KONET_RATE_LIMIT` broadcasts per second (default 60)
 ```json
 { "status": "error", "response": { "reason": "rate_limited" } }
 ```
+
+Binary frames have a separate budget — see [Binary Frames & Floor Control](/api/binary#rate-limiting).

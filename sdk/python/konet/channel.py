@@ -6,6 +6,8 @@ from collections import defaultdict
 from typing import Any, Callable, Awaitable
 
 EventHandler = Callable[[Any], Awaitable[None] | None]
+#: Handles an incoming binary frame.
+BinaryHandler = Callable[[bytes], Awaitable[None] | None]
 
 
 class Channel:
@@ -13,14 +15,20 @@ class Channel:
         self,
         topic: str,
         send_fn: Callable,
+        send_binary_fn: Callable,
         next_ref: Callable[[], str],
     ) -> None:
         self.topic = topic
         self._state: str = "idle"  # idle | joining | joined | errored
         self._send_fn = send_fn
+        self._send_binary_fn = send_binary_fn
         self._next_ref = next_ref
         self._join_ref: str | None = None
         self._handlers: dict[str, list[EventHandler]] = defaultdict(list)
+        # Kept apart from _handlers because a binary event delivers bytes, not
+        # a decoded payload, and mixing them would force every handler to
+        # check a type it already knows.
+        self._binary_handlers: dict[str, list[BinaryHandler]] = defaultdict(list)
         self._reply_futures: dict[str, asyncio.Future] = {}
 
     async def subscribe(self) -> None:
@@ -69,6 +77,78 @@ class Channel:
         await self._send_fn(
             [self._join_ref, ref, self.topic, "broadcast", {"event": event, "payload": payload or {}}]
         )
+
+    async def send_binary(self, event: str, data: bytes) -> None:
+        """Send a binary frame — audio, or anything else at a media rate.
+
+        Three things differ from :meth:`send`, and all follow from the rate:
+        Phoenix frames it natively instead of base64 inside JSON, the server
+        never acknowledges it, and it is refused unless this client holds the
+        channel's floor. Take the floor with :meth:`acquire_floor` first.
+        """
+        if self._state != "joined":
+            raise RuntimeError(f"Channel {self.topic} is not joined")
+
+        # Not tracked like send(): at fifty frames a second, a future per frame
+        # would cost more than the frames do.
+        await self._send_binary_fn(self._join_ref, self._next_ref(), self.topic, event, data)
+
+    def on_binary(self, event: str, handler: BinaryHandler) -> Callable[[], None]:
+        """Register a handler for binary frames. Returns an unsubscribe callable."""
+        self._binary_handlers[event].append(handler)
+
+        def off() -> None:
+            self._binary_handlers[event].remove(handler)
+
+        return off
+
+    async def acquire_floor(self) -> str:
+        """Claim the right to send on this channel.
+
+        At most one member holds it at a time, which is how half-duplex media —
+        push-to-talk — is arbitrated. Returns the holder, which is this client
+        on success; raises naming whoever already holds it otherwise.
+        """
+        response = await self._request("konet:floor_acquire")
+        return response.get("holder", "")
+
+    async def release_floor(self) -> None:
+        """Give the floor back. Only the holder may."""
+        await self._request("konet:floor_release")
+
+    async def _request(self, event: str) -> dict:
+        """A push that expects a reply, unlike the fire-and-forget send()."""
+        if self._state != "joined":
+            raise RuntimeError(f"Channel {self.topic} is not joined")
+
+        ref = self._next_ref()
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._reply_futures[ref] = fut
+
+        await self._send_fn([self._join_ref, ref, self.topic, event, {}])
+
+        try:
+            reply = await asyncio.wait_for(fut, timeout=10.0)
+        except asyncio.TimeoutError:
+            self._reply_futures.pop(ref, None)
+            raise RuntimeError(f"{event} sans réponse") from None
+
+        if reply.get("status") != "ok":
+            refusal = reply.get("response") or {}
+            holder = refusal.get("holder")
+            reason = refusal.get("reason", "refusé")
+            if holder:
+                raise RuntimeError(f"{reason} (détenue par {holder})")
+            raise RuntimeError(f"{event} refusé ({reason})")
+
+        return reply.get("response") or {}
+
+    def _receive_binary(self, event: str, data: bytes) -> None:
+        """Called by the client when a binary frame arrives for this topic."""
+        for handler in list(self._binary_handlers.get(event, [])):
+            result = handler(data)
+            if asyncio.iscoroutine(result):
+                asyncio.create_task(result)
 
     def _receive(self, frame: list) -> None:
         """Called by the client when a message arrives for this topic."""

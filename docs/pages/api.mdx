@@ -16,7 +16,7 @@ Konet exposes a WebSocket API built on Phoenix Channels.
 
 ## Message Format
 
-All channel messages use JSON:
+Channel messages are JSON:
 
 ```json
 {
@@ -25,6 +25,9 @@ All channel messages use JSON:
   "ref": "1"
 }
 ```
+
+Binary frames use Phoenix's own framing instead, which is what makes them
+usable at a media rate — see [Binary Frames & Floor Control](/api/binary).
 
 ## Topics
 

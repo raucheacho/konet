@@ -64,3 +64,29 @@ await channel.unsubscribe()
 pip install pytest pytest-asyncio
 pytest
 ```
+
+## Binary Frames & Floor Control
+
+For anything at a media rate. Take the floor before sending — a binary frame
+without it is refused. See [the protocol page](/api/binary) for the guarantees.
+
+```python
+channel = client.channel("room:team-42:ptt")
+await channel.subscribe()
+
+def on_frame(data: bytes) -> None:
+    ...  # an incoming frame
+
+channel.on_binary("a", on_frame)
+
+try:
+    await channel.acquire_floor()
+    await channel.send_binary("a", frame)
+except RuntimeError as error:
+    ...  # someone else is talking; the error names them
+finally:
+    await channel.release_floor()
+```
+
+`send_binary` copies its argument, so a caller may reuse one buffer for every
+frame.
