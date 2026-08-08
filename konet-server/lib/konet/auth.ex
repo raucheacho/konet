@@ -7,13 +7,35 @@ defmodule Konet.Auth do
   def verify(token) when is_binary(token) do
     signer = Joken.Signer.create("HS256", jwt_secret())
 
-    case Joken.verify_and_validate(%{}, token, signer) do
+    case Joken.verify_and_validate(token_config(), token, signer) do
       {:ok, claims} -> {:ok, claims}
       {:error, reason} -> {:error, reason}
     end
   end
 
   def verify(_), do: {:error, :invalid_token}
+
+  # Expiry is enforced only when the token carries an "exp" claim.
+  #
+  # That conditional is not laziness: the anon and service keys minted by
+  # sign/1 have no "exp" at all, and every existing deployment holds one.
+  # Making the claim mandatory would invalidate all of them on upgrade. Joken
+  # skips validators for claims absent from the token, which gives exactly the
+  # semantics wanted here — a token that declares an expiry is held to it, one
+  # that never declared any keeps working.
+  #
+  # No generator is attached, so signing is unchanged: sign/1 still adds only
+  # "iat", and callers decide whether to include an expiry.
+  defp token_config do
+    Joken.Config.add_claim(
+      %{},
+      "exp",
+      nil,
+      fn exp, _claims, _context ->
+        is_integer(exp) and exp > System.system_time(:second)
+      end
+    )
+  end
 
   def sign(claims) when is_map(claims) do
     signer = Joken.Signer.create("HS256", jwt_secret())

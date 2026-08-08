@@ -1,0 +1,162 @@
+# Binary Frames & Floor Control
+
+Two features that only make sense together: a way to send data at a media rate,
+and a way to decide who is allowed to.
+
+They exist for half-duplex media — push-to-talk, a radio net, a turn-taking
+game — where a second sender must be *told no* rather than mixed in. Konet
+arbitrates who may send; it never looks at what is sent.
+
+## Floor control
+
+At most one member of a topic holds the floor at a time.
+
+```js
+const channel = client.channel('room:team-42:ptt')
+await channel.subscribe()
+
+try {
+  await channel.acquireFloor()
+  // you may now send binary frames
+} catch (error) {
+  // someone else is talking; the error names them
+}
+
+await channel.releaseFloor()
+```
+
+Everyone on the topic — including the holder — receives an announcement, so a
+UI can show who is talking without asking:
+
+```js
+channel.on('konet:floor', ({ holder }) => {
+  // holder is a user id, or null when the floor is free
+})
+```
+
+### Guarantees
+
+**Acquisition is atomic.** Two clients pressing in the same millisecond resolve
+to one winner. The floor lives in a single ETS table and is claimed with a
+compare-and-swap, so there is no window where both believe they hold it.
+
+**A repeated acquire by the holder succeeds.** A client that presses twice, or
+retries after a slow reply, is not punished for it.
+
+**Only the holder can release.** A late release from a previous holder cannot
+cut off whoever is talking now.
+
+**The floor is always freed.** Three separate paths cover it: an explicit
+release, the holder's channel process dying — a rider entering a tunnel
+mid-sentence — and a sweep for holders that exceed `KONET_FLOOR_MAX_HOLD_MS`
+(default 30 000). A client that vanishes cannot mute a channel.
+
+### Refusals
+
+```json
+{ "status": "error", "response": { "reason": "floor_held", "holder": "alice" } }
+{ "status": "error", "response": { "reason": "not_holder" } }
+```
+
+## Binary frames
+
+Phoenix carries binary payloads in their own framing rather than base64 inside
+JSON. At 50 frames a second — 20 ms of Opus — that difference is a third of the
+bandwidth and a JSON parse per frame.
+
+```js
+channel.on('a', (data) => {
+  // data is a Uint8Array
+})
+
+await channel.acquireFloor()
+channel.sendBinary('a', frame)
+```
+
+The event name is yours; short is better, since it travels on every frame.
+
+### Rules
+
+**The floor is required.** A binary frame from a client that does not hold it is
+refused with `floor_required`. This is the point of the two features being one
+page: binary frames are how media is sent, and the floor is what makes that
+safe.
+
+**Frames are never echoed to the sender.** Konet uses `broadcast_from!`, not
+`broadcast!` — returning a talker's own audio is echo, and on a phone it is echo
+at speaker volume.
+
+**Frames are not acknowledged.** At a media rate a reply per frame would cost
+more than the frames do. Only a refusal comes back.
+
+**Frames are not recorded in history.** Buffering 50 frames a second would blow
+up the replay buffer for a replay nobody can use. Recording media is a durable
+storage problem, not a replay-buffer one.
+
+**Frames are not buffered across a reconnect.** A client SDK drops binary frames
+while the socket is down rather than queueing them. Replaying audio recorded
+seconds ago into a live channel is worse than losing it — by the time it
+arrives, the moment has passed.
+
+### Rate limiting
+
+Binary frames have their own budget, `KONET_RATE_LIMIT_BINARY` (default 120 per
+second per socket), separate from the message budget. They arrive at a media
+rate, not a message rate: 20 ms frames are 50 per second on their own, and
+sharing the message budget would have a talker starve their own position
+updates.
+
+The floor already allows one sender per topic, so this limit is a backstop
+against a single flooding client rather than the primary control.
+
+## Performance
+
+Binary broadcasts take Phoenix's *fastlane*: the frame is encoded once and
+written to every subscriber's socket without passing through their channel
+processes.
+
+The hot path does nothing else — no history, no per-frame logging. Those were
+removed deliberately, and audio is where their cost would first show.
+
+## Wire format
+
+You do not need this to use the SDKs, which implement it. It is here so a
+client in a language Konet does not ship can be written, and so the framing can
+be verified during an audit.
+
+Three shapes, told apart by the first byte. Every size field is one byte, so
+each field is capped at 255 bytes.
+
+```
+push       0 | join_ref_size | ref_size | topic_size | event_size | join_ref | ref | topic | event | data
+reply      1 | join_ref_size | ref_size | topic_size | status_size | join_ref | ref | topic | status | data
+broadcast  2 | topic_size | event_size | topic | event | data
+```
+
+The directions are **not** symmetric: a client-to-server push carries a `ref`,
+a server-to-client push does not. This is Phoenix's choice, and it is the
+mistake to expect when writing a new client — the SDKs name their decoders
+`decodeServerFrame` rather than `decodeFrame` for exactly that reason.
+
+Sizes are byte counts, not character counts. A topic like `room:équipe` is 11
+bytes for 10 characters; using the character count shifts every field after it.
+
+## Configuration
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `KONET_RATE_LIMIT_BINARY` | `120` | Binary frames per second, per socket |
+| `KONET_FLOOR_MAX_HOLD_MS` | `30000` | Before a stuck holder is swept |
+
+## Support by SDK
+
+| SDK | Binary | Floor |
+|-----|--------|-------|
+| JavaScript | `channel.sendBinary()` / `channel.on()` | `acquireFloor()` / `releaseFloor()` |
+| React Native | same, via the JavaScript core | same |
+| Go | `channel.SendBinary()` / `channel.OnBinary()` | `AcquireFloor()` / `ReleaseFloor()` |
+| Python | `channel.send_binary()` / `channel.on_binary()` | `acquire_floor()` / `release_floor()` |
+
+React Native needs no native module: its WebSocket supports
+`binaryType = "arraybuffer"`, so binary frames work on a phone exactly as they
+do in a browser.

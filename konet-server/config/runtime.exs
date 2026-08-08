@@ -42,6 +42,11 @@ if config_env() == :prod do
     studio_password: System.get_env("KONET_STUDIO_PASSWORD"),
     rate_limit_messages: parse_int.("KONET_RATE_LIMIT", 60),
     rate_limit_connections: parse_int.("KONET_CONN_RATE_LIMIT", 200),
+    # Binary frames arrive at a media rate, not a message rate: 20 ms frames
+    # are 50 per second on their own. Sharing the message budget would have a
+    # talker starve their own non-media events.
+    rate_limit_binary: parse_int.("KONET_RATE_LIMIT_BINARY", 120),
+    floor_max_hold_ms: parse_int.("KONET_FLOOR_MAX_HOLD_MS", 30_000),
     history_limit: parse_int.("KONET_HISTORY_LIMIT", 0),
     webhook_url: System.get_env("KONET_WEBHOOK_URL"),
     webhook_secret: System.get_env("KONET_WEBHOOK_SECRET")
@@ -59,6 +64,11 @@ if config_env() == :dev do
     studio_password: System.get_env("KONET_STUDIO_PASSWORD"),
     rate_limit_messages: parse_int.("KONET_RATE_LIMIT", 60),
     rate_limit_connections: parse_int.("KONET_CONN_RATE_LIMIT", 200),
+    # Binary frames arrive at a media rate, not a message rate: 20 ms frames
+    # are 50 per second on their own. Sharing the message budget would have a
+    # talker starve their own non-media events.
+    rate_limit_binary: parse_int.("KONET_RATE_LIMIT_BINARY", 120),
+    floor_max_hold_ms: parse_int.("KONET_FLOOR_MAX_HOLD_MS", 30_000),
     history_limit: parse_int.("KONET_HISTORY_LIMIT", 0),
     webhook_url: System.get_env("KONET_WEBHOOK_URL"),
     webhook_secret: System.get_env("KONET_WEBHOOK_SECRET")

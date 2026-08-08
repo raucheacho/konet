@@ -48,6 +48,26 @@ reconnects if the probe goes unanswered. Channels are re-joined automatically.
 That is the entire delta. If you already manage the lifecycle yourself, use
 `KonetClient` from the core and call `checkConnection()` where it fits.
 
+## Binary Frames & Floor Control
+
+They work on a phone exactly as in a browser, with **no native module**: React
+Native's WebSocket supports `binaryType = "arraybuffer"`, so the JavaScript
+core handles the framing.
+
+```ts
+const channel = client.channel('room:team-42:ptt')
+await channel.subscribe()
+
+channel.on('a', (data: Uint8Array) => { /* an incoming frame */ })
+
+await channel.acquireFloor()
+channel.sendBinary('a', frame)
+await channel.releaseFloor()
+```
+
+Encoding the audio itself is a separate problem — React Native has no Opus —
+and is not part of this SDK. See [the protocol page](/api/binary).
+
 ## Client Options
 
 ```ts

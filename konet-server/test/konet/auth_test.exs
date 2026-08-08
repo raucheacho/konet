@@ -17,6 +17,38 @@ defmodule Konet.AuthTest do
       assert {:error, :invalid_token} = Auth.verify(nil)
     end
 
+    test "rejects an expired token" do
+      {:ok, token} =
+        Auth.sign(%{"sub" => "user-1", "exp" => System.system_time(:second) - 60})
+
+      assert {:error, _} = Auth.verify(token)
+    end
+
+    test "accepts a token whose expiry is still ahead" do
+      {:ok, token} =
+        Auth.sign(%{"sub" => "user-1", "exp" => System.system_time(:second) + 3600})
+
+      assert {:ok, claims} = Auth.verify(token)
+      assert claims["sub"] == "user-1"
+    end
+
+    # The anon and service keys are signed without any expiry, and every
+    # existing deployment holds one. Enforcing "exp" unconditionally would
+    # invalidate them all on upgrade.
+    test "still accepts a token that carries no expiry" do
+      {:ok, token} = Auth.sign(%{"role" => "anon"})
+
+      assert {:ok, claims} = Auth.verify(token)
+      assert claims["role"] == "anon"
+      refute Map.has_key?(claims, "exp")
+    end
+
+    test "rejects a token whose expiry is not a number" do
+      {:ok, token} = Auth.sign(%{"sub" => "user-1", "exp" => "bientôt"})
+
+      assert {:error, _} = Auth.verify(token)
+    end
+
     test "role helpers" do
       assert Auth.anon?(%{"role" => "anon"})
       assert Auth.service?(%{"role" => "service"})

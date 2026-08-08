@@ -71,3 +71,39 @@ err := konet.MarshalPayload(payload, &msg)
 ```
 
 > Presence tracking is currently available in the JavaScript SDK only.
+
+## Binary Frames & Floor Control
+
+For anything at a media rate. Take the floor before sending — a binary frame
+without it is refused. See [the protocol page](/api/binary) for the guarantees.
+
+```go
+channel := client.Channel("room:team-42:ptt")
+if err := channel.Subscribe(ctx); err != nil {
+    return err
+}
+
+channel.OnBinary("a", func(data []byte) {
+    // an incoming frame; the slice is only valid for this call
+})
+
+holder, err := channel.AcquireFloor(ctx)
+if err != nil {
+    // someone else is talking; the error names them
+    return err
+}
+_ = holder
+
+if err := channel.SendBinary("a", frame); err != nil {
+    return err
+}
+
+return channel.ReleaseFloor(ctx)
+```
+
+`SendBinary` copies its argument, so a caller may reuse one buffer for every
+frame.
+
+Binary handlers run **synchronously**, unlike `On` handlers which each get a
+goroutine: audio frames have to reach a play-out buffer in the order they
+arrived, and one goroutine per frame would not promise that.

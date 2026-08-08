@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 import websockets
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
+from .binary import BROADCAST, PUSH, decode_server_frame, encode_push
 from .channel import Channel
 
 
@@ -80,13 +81,28 @@ class KonetClient:
 
     def channel(self, topic: str) -> Channel:
         if topic not in self._channels:
-            self._channels[topic] = Channel(topic, self._send, self._next_ref)
+            self._channels[topic] = Channel(
+                topic, self._send, self._send_binary, self._next_ref
+            )
         return self._channels[topic]
 
     async def _send(self, frame: list) -> None:
         if self._ws is None:
             raise RuntimeError("Not connected")
         await self._ws.send(json.dumps(frame))
+
+    async def _send_binary(
+        self, join_ref: str | None, ref: str, topic: str, event: str, data: bytes
+    ) -> None:
+        """Write a binary push.
+
+        Never buffered while the socket is down, unlike text: replaying audio
+        recorded seconds ago into a live channel would be worse than losing it
+        — by the time it arrives, the moment has passed.
+        """
+        if self._ws is None:
+            return
+        await self._ws.send(encode_push(join_ref or "", ref, topic, event, data))
 
     def _next_ref(self) -> str:
         self._ref_counter += 1
@@ -101,6 +117,13 @@ class KonetClient:
                     continue
 
                 raw = await self._ws.recv()
+
+                # The opcode is what tells text from binary: websockets hands
+                # back bytes for a binary frame and str for a text one.
+                if isinstance(raw, (bytes, bytearray)):
+                    self._handle_binary(bytes(raw))
+                    continue
+
                 frame = json.loads(raw)
 
                 if not isinstance(frame, list) or len(frame) != 5:
@@ -129,6 +152,25 @@ class KonetClient:
 
             except asyncio.CancelledError:
                 break
+
+    def _handle_binary(self, raw: bytes) -> None:
+        """Route a binary frame to its channel.
+
+        A malformed frame is dropped rather than fatal: it must not take down
+        the socket that carries every other channel.
+        """
+        frame = decode_server_frame(raw)
+        if frame is None:
+            return
+
+        # A binary reply means the server refused the frame. Nothing waits on
+        # one, since send_binary does not track refs.
+        if frame.kind not in (BROADCAST, PUSH):
+            return
+
+        ch = self._channels.get(frame.topic)
+        if ch:
+            ch._receive_binary(frame.event, frame.data)
 
     async def _heartbeat_loop(self) -> None:
         while self._connected:

@@ -31,6 +31,8 @@ variables when it starts the container.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `KONET_RATE_LIMIT` | `60` | Max broadcasts per second per socket |
+| `KONET_RATE_LIMIT_BINARY` | `120` | Max binary frames per second per socket. Separate from the message budget because binary arrives at a media rate — 20 ms audio frames are 50 per second on their own |
+| `KONET_FLOOR_MAX_HOLD_MS` | `30000` | How long one client may hold a topic's floor before it is swept. Guards against a client that takes the floor and never releases it |
 | `KONET_CONN_RATE_LIMIT` | `200` | Max new connections per minute per IP |
 
 ### Features

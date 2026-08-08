@@ -108,7 +108,7 @@ func (c *Client) Channel(topic string) *Channel {
 		return ch
 	}
 
-	ch := newChannel(topic, c.send, c.nextRef)
+	ch := newChannel(topic, c.send, c.sendBinary, c.nextRef)
 	c.channels[topic] = ch
 	return ch
 }
@@ -122,6 +122,27 @@ func (c *Client) send(frame phxFrame) error {
 		return fmt.Errorf("konet: not connected")
 	}
 	return wsjson.Write(context.Background(), conn, frame.toWire())
+}
+
+// sendBinary writes a binary push.
+//
+// Never buffered while the socket is down, unlike text: replaying audio
+// recorded seconds ago into a live channel would be worse than losing it — by
+// the time it arrives, the moment has passed.
+func (c *Client) sendBinary(joinRef, ref, topic, event string, data []byte) error {
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+
+	if conn == nil {
+		return fmt.Errorf("konet: not connected")
+	}
+
+	frame, err := encodeBinaryPush(joinRef, ref, topic, event, data)
+	if err != nil {
+		return err
+	}
+	return conn.Write(context.Background(), websocket.MessageBinary, frame)
 }
 
 func (c *Client) nextRef() string {
@@ -144,8 +165,11 @@ func (c *Client) readLoop(ctx context.Context) {
 			return
 		}
 
-		var raw []json.RawMessage
-		if err := wsjson.Read(ctx, conn, &raw); err != nil {
+		// conn.Read rather than wsjson.Read: the opcode is what tells text
+		// from binary, and wsjson would consume it and try to parse audio as
+		// JSON.
+		messageType, message, err := conn.Read(ctx)
+		if err != nil {
 			select {
 			case <-c.done:
 				return
@@ -153,6 +177,16 @@ func (c *Client) readLoop(ctx context.Context) {
 				c.reconnect(ctx)
 				return
 			}
+		}
+
+		if messageType == websocket.MessageBinary {
+			c.handleBinary(message)
+			continue
+		}
+
+		var raw []json.RawMessage
+		if err := json.Unmarshal(message, &raw); err != nil {
+			continue
 		}
 
 		if len(raw) != 5 {
@@ -191,6 +225,30 @@ func (c *Client) readLoop(ctx context.Context) {
 		if ch != nil {
 			ch.receive(frame)
 		}
+	}
+}
+
+// handleBinary routes a binary frame to its channel. A malformed frame is
+// dropped rather than fatal: it must not take down the socket that carries
+// every other channel.
+func (c *Client) handleBinary(message []byte) {
+	frame, err := decodeServerBinaryFrame(message)
+	if err != nil {
+		return
+	}
+
+	// A binary reply means the server refused the frame. Nothing waits on one,
+	// since SendBinary does not track refs.
+	if frame.Kind != binaryBroadcast && frame.Kind != binaryPush {
+		return
+	}
+
+	c.mu.RLock()
+	ch := c.channels[frame.Topic]
+	c.mu.RUnlock()
+
+	if ch != nil {
+		ch.receiveBinary(frame.Event, frame.Data)
 	}
 }
 

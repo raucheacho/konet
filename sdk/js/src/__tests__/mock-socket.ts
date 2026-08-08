@@ -26,10 +26,13 @@ export class MockWebSocket {
   readonly url: string;
   readyState: number = MockWebSocket.CONNECTING;
   sent: string[] = [];
+  /** Binary pushes, kept apart so the text assertions stay unchanged. */
+  sentBinary: ArrayBuffer[] = [];
+  binaryType = "blob";
   closeCalls: Array<{ code?: number; reason?: string }> = [];
 
   onopen: (() => void) | null = null;
-  onmessage: ((ev: { data: string }) => void) | null = null;
+  onmessage: ((ev: { data: string | ArrayBuffer }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
 
@@ -38,8 +41,9 @@ export class MockWebSocket {
     MockWebSocket.instances.push(this);
   }
 
-  send(data: string): void {
-    this.sent.push(data);
+  send(data: string | ArrayBuffer): void {
+    if (typeof data === "string") this.sent.push(data);
+    else this.sentBinary.push(data);
   }
 
   close(code?: number, reason?: string): void {
@@ -73,6 +77,20 @@ export class MockWebSocket {
 
   serverSend(frame: WireFrame): void {
     this.onmessage?.({ data: JSON.stringify(frame) });
+  }
+
+  /** A binary broadcast, framed the way Phoenix's serializer does. */
+  serverBroadcastBinary(topic: string, event: string, data: Uint8Array): void {
+    const t = new TextEncoder().encode(topic);
+    const e = new TextEncoder().encode(event);
+    const bytes = new Uint8Array(3 + t.length + e.length + data.length);
+    bytes[0] = 2; // broadcast
+    bytes[1] = t.length;
+    bytes[2] = e.length;
+    bytes.set(t, 3);
+    bytes.set(e, 3 + t.length);
+    bytes.set(data, 3 + t.length + e.length);
+    this.onmessage?.({ data: bytes.buffer });
   }
 
   frames(): WireFrame[] {

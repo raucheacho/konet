@@ -125,6 +125,39 @@ This matters most on high-frequency streams, where the server's per-socket rate
 limit is otherwise reached silently. Raise it with `KONET_RATE_LIMIT` on the
 server if you see `rate_limited` under normal load.
 
+## Binary Frames & Floor Control
+
+For anything at a media rate. Take the floor before sending — a binary frame
+without it is refused. See [the protocol page](/api/binary) for the guarantees.
+
+```ts
+const channel = client.channel('room:team-42:ptt')
+await channel.subscribe()
+
+channel.on('konet:floor', ({ holder }) => {
+  // holder is a user id, or null when the floor is free
+})
+
+channel.on('a', (data: Uint8Array) => {
+  // an incoming frame; the view is only valid for this call
+})
+
+try {
+  await channel.acquireFloor()
+  channel.sendBinary('a', frame) // frame: Uint8Array
+} catch (error) {
+  // someone else is talking; the error names them
+} finally {
+  await channel.releaseFloor()
+}
+```
+
+`sendBinary` copies its argument, so a caller may reuse one buffer for every
+frame — which an audio path does, every 20 ms.
+
+Unlike `send()`, binary frames are never buffered across a reconnect. Replaying
+audio recorded seconds ago into a live channel is worse than losing it.
+
 ## Types
 
 The SDK is written in TypeScript and ships with declaration files.
