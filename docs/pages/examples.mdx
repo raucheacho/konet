@@ -1,0 +1,74 @@
+import { Callout } from 'nextra/components'
+
+# Examples
+
+Runnable projects live in [`examples/`](https://github.com/raucheacho/konet/tree/main/examples)
+in the repository.
+
+## Live Room
+
+A collaborative multiplayer room — **live cursors, presence, flying reactions,
+and chat**, over WebSockets, with **no database**. A Python agent joins the same
+room as the browsers, which is the point: a Konet channel is cross-runtime.
+
+[`examples/live-room`](https://github.com/raucheacho/konet/tree/main/examples/live-room)
+
+| What you see | Konet feature |
+|---|---|
+| Other people's cursors moving live | [Broadcast](/reference/channels) |
+| "N online" counter | [Presence](/reference/presence) |
+| Emojis flying across the screen | [Broadcast](/reference/channels) |
+| Chat backlog when you join late | [History replay](/reference/channels#history-replay) (`konet:history`) |
+| A 🤖 that moves, reacts and chats | Cross-runtime channel (JS + Python SDK) |
+| The Studio link in the top bar | [Studio](/server/studio) |
+
+### Run it
+
+You need a running server and an `anon_key`:
+
+```bash
+konet start
+konet keys generate      # prints the anon_key, also visible in Studio → Keys
+```
+
+<Callout>
+History replay is off by default. Start the server with `KONET_HISTORY_LIMIT=50`
+if you want late joiners to receive the chat backlog — everything else works
+without it.
+</Callout>
+
+The web app (Node 18+):
+
+```bash
+cd examples/live-room/web
+npm install              # pulls the local SDK via file:../../../sdk/js
+npm run dev
+```
+
+Open the printed URL (usually `http://localhost:5173`), paste your `anon_key`,
+and enter the room. Open a second tab to watch cursors and presence sync.
+
+The Python agent (3.10+, optional but the fun part):
+
+```bash
+cd examples/live-room/agent
+python -m venv .venv && source .venv/bin/activate
+pip install -e ../../../sdk/python
+KONET_TOKEN=<your anon_key> python agent.py
+```
+
+### Two things it demonstrates
+
+**Identity travels in the payload, not in presence.** Presence metadata is fixed
+server-side (`online_at`, `room`, `role`), so each client carries its own
+`name`/`color`/`id` inside broadcast payloads.
+
+**Phoenix delivers a broadcast back to its sender.** JSON broadcasts are echoed,
+so a client filters out its own messages by id. Binary frames are the exception
+— they are never echoed, see [Binary Frames](/reference/binary#rules).
+
+## Push-to-talk
+
+Binary frames and floor control have no standalone example yet. The protocol
+page carries working snippets for all four SDKs:
+[Binary Frames & Floor Control](/reference/binary).
