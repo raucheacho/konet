@@ -62,6 +62,12 @@ async function main() {
   const chA = a.channel(ROOM);
   const chB = b.channel(ROOM);
 
+  // Registered before the join, not after: the server pushes presence_state
+  // immediately behind the join reply, so a listener attached once subscribe()
+  // has resolved is already too late. The Go and Python scenarios always did
+  // this; leaving it out here passed locally and failed on CI.
+  const presence = next(chA, "presence", 5000);
+
   try {
     await chA.subscribe();
     await chB.subscribe();
@@ -73,8 +79,7 @@ async function main() {
   }
 
   // 3 — presence arrives unprompted after the join
-  const presence = await next(chA, "presence", 3000);
-  check(3, "presence_state", presence !== null, "no presence event within 3s");
+  check(3, "presence_state", (await presence) !== null, "no presence event within 5s");
 
   // 4/5 — broadcast reaches the other client, and echoes to the sender
   const onB = next(chB, "conf:hello", 3000);

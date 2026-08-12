@@ -80,7 +80,14 @@ defmodule Konet.TablesTest do
     assert {:ok, "bob", _} = Konet.Floor.acquire(topic, "bob", holder)
 
     # Kill the holder and the arbiter together: nothing is left to notice.
+    #
+    # Waiting for the DOWN matters: Process.exit/2 is asynchronous, so without it
+    # Process.alive?/1 inside Floor's init could still say true and the entry
+    # would be kept. It passed locally and failed on CI.
+    ref = Process.monitor(holder)
     Process.exit(holder, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^holder, _}, 1000
+
     restart(Konet.Floor)
 
     assert Konet.Floor.holder(topic) == nil,
