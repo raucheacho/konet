@@ -1,0 +1,10 @@
+{
+  "name": "konet-conformance-js",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Runs the shared conformance scenario against a real konet-server.",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
