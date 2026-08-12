@@ -34,8 +34,8 @@ jobs:
       # matters: release-sdk-js.yml publishes it from the same tag, in parallel.
       - name: Install and Build
         run: |
-          npm version ${GITHUB_REF_NAME#v} --no-git-tag-version
           npm ci --legacy-peer-deps
+          npm version ${GITHUB_REF_NAME#v} --no-git-tag-version
           npm run build
 
       - name: Publish to npm

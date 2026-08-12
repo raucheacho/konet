@@ -29,7 +29,7 @@
     <div class="sidebar-footer">
       <a href="/api/health" target="_blank" class="status-link">
         <span class="status-dot"></span>
-        <span class="mono">v0.1.0</span>
+        <span class="mono">v<%= Konet.Version.current() %></span>
       </a>
       <form :if={Konet.Auth.studio_auth_enabled?()} method="post" action="/studio/logout" class="signout-form">
         <input type="hidden" name="_csrf_token" value={Plug.CSRFProtection.get_csrf_token()} />

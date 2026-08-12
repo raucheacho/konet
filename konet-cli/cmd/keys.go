@@ -28,8 +28,14 @@ var keysGenerateCmd = &cobra.Command{
 			return fmt.Errorf("no konet.config.toml found — run `konet init` first")
 		}
 
-		if cfg.Auth.JWTSecret == "" || cfg.Auth.JWTSecret == "change-me-in-production-min-32-chars!!" {
-			fmt.Fprintln(os.Stderr, "⚠ Set a real jwt_secret in konet.config.toml before generating keys")
+		// `konet init` now generates a random secret, so reaching either of
+		// these means the file was hand-edited back to an unsafe value.
+		if cfg.Auth.JWTSecret == "" {
+			return fmt.Errorf("jwt_secret is empty in %s — set one, or delete the file and re-run `konet init`",
+				config.ConfigFileName)
+		}
+		if cfg.Auth.JWTSecret == "change-me-in-production-min-32-chars!!" {
+			fmt.Fprintln(os.Stderr, "⚠ jwt_secret is still the documented placeholder — anyone can forge tokens against it")
 		}
 
 		anonKey, err := signJWT(map[string]any{"role": "anon"}, cfg.Auth.JWTSecret)

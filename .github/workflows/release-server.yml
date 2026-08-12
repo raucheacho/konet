@@ -49,6 +49,12 @@ jobs:
         with:
           context: konet-server
           platforms: linux/amd64,linux/arm64
+          # Stamps the tag into the release, so /api/health and the Studio
+          # report the version that actually shipped. meta.outputs.version is
+          # the semver form ("0.3.0"), not the raw ref ("v0.3.0") — mix rejects
+          # the leading v.
+          build-args: |
+            KONET_VERSION=${{ steps.meta.outputs.version }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -6,10 +6,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/raucheacho/konet/konet-cli/internal/api"
 	"github.com/raucheacho/konet/konet-cli/internal/config"
 	"github.com/raucheacho/konet/konet-cli/internal/docker"
 	"github.com/spf13/cobra"
 )
+
+var startImage string
 
 var startCmd = &cobra.Command{
 	Use:   "start",
@@ -21,12 +24,14 @@ var startCmd = &cobra.Command{
 		}
 
 		switch cfg.Server.Mode {
-		case "docker":
+		case "docker", "":
 			return startDocker(cfg)
 		case "native":
-			return fmt.Errorf("native mode not yet supported — use mode = \"docker\" in your config")
+			return fmt.Errorf(
+				"mode = \"native\" is not implemented — the CLI only runs the server in Docker.\n" +
+					"Set mode = \"docker\" in konet.config.toml, or run the server from source with `mix phx.server`")
 		default:
-			return fmt.Errorf("unknown mode %q — use \"docker\" or \"native\"", cfg.Server.Mode)
+			return fmt.Errorf("unknown mode %q — use \"docker\"", cfg.Server.Mode)
 		}
 	},
 }
@@ -46,12 +51,15 @@ func startDocker(cfg *config.Config) error {
 	}
 	if running {
 		fmt.Printf("✓ Konet is already running (container %s)\n", id)
-		fmt.Printf("  WebSocket  ws://%s:%d/socket\n", cfg.Server.Host, cfg.Server.Port)
-		fmt.Printf("  Studio     %s\n", cfg.StudioURL())
+		printEndpoints(cfg)
 		return nil
 	}
 
-	image := docker.ImageName
+	image := cfg.Image()
+	if startImage != "" {
+		image = startImage
+	}
+
 	exists, err := cli.ImageExists(ctx, image)
 	if err != nil {
 		return fmt.Errorf("cannot check local images: %w", err)
@@ -75,28 +83,62 @@ func startDocker(cfg *config.Config) error {
 		}
 	}
 
+	if cfg.Auth.AnonKey == "" || cfg.Auth.ServiceKey == "" {
+		fmt.Println("⚠ No API keys in konet.config.toml — run `konet keys generate` before connecting a client")
+	}
+
 	fmt.Printf("Starting konet-server on port %d...\n", cfg.Server.Port)
 	if err := cli.Start(ctx, docker.StartOptions{
-		Image:          image,
-		Port:           cfg.Server.Port,
-		JWTSecret:      cfg.Auth.JWTSecret,
-		AnonKey:        cfg.Auth.AnonKey,
-		ServiceKey:     cfg.Auth.ServiceKey,
-		SecretKey:      cfg.Auth.SecretKeyBase,
-		StudioPassword: cfg.Studio.Password,
+		Image: image,
+		Port:  cfg.Server.Port,
+		Env:   cfg.ServerEnv(),
 	}); err != nil {
 		return fmt.Errorf("container start failed: %w", err)
 	}
 
-	// Give the server a moment to initialize
-	fmt.Print("Waiting for server to be ready.")
-	time.Sleep(docker.WaitDuration())
-	fmt.Println(" ✓")
+	if err := waitUntilHealthy(cfg); err != nil {
+		return err
+	}
 
 	fmt.Println("\n✓ Konet is running!")
+	printEndpoints(cfg)
+	fmt.Println("\n  Run `konet logs --follow` to stream logs")
+	return nil
+}
+
+// waitUntilHealthy polls /api/health instead of sleeping a flat 20 seconds,
+// which used to waste most of that time on a fast machine and could still
+// report success before the server was up on a slow one.
+func waitUntilHealthy(cfg *config.Config) error {
+	const timeout = 60 * time.Second
+	const interval = 250 * time.Millisecond
+
+	client := api.New(cfg.ServerBaseURL(), cfg.Auth.ServiceKey)
+	deadline := time.Now().Add(timeout)
+
+	fmt.Print("Waiting for server to be ready")
+	for time.Now().Before(deadline) {
+		if _, err := client.Health(); err == nil {
+			fmt.Println(" ✓")
+			return nil
+		}
+		fmt.Print(".")
+		time.Sleep(interval)
+	}
+
+	fmt.Println()
+	return fmt.Errorf(
+		"server did not answer %s/api/health within %s — check `konet logs`",
+		cfg.ServerBaseURL(), timeout)
+}
+
+func printEndpoints(cfg *config.Config) {
 	fmt.Printf("  WebSocket  ws://%s:%d/socket\n", cfg.Server.Host, cfg.Server.Port)
 	fmt.Printf("  REST API   %s/api\n", cfg.ServerBaseURL())
 	fmt.Printf("  Studio     %s\n", cfg.StudioURL())
-	fmt.Println("\n  Run `konet logs --follow` to stream logs")
-	return nil
+}
+
+func init() {
+	startCmd.Flags().StringVar(&startImage, "image", "",
+		"Server image to run (overrides [server].image; useful for a locally built one)")
 }

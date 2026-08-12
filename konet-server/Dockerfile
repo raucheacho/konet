@@ -20,6 +20,10 @@ RUN mix local.hex --force && mix local.rebar --force
 
 ENV MIX_ENV=prod
 
+# Stamped into the release so /api/health and the Studio report the real tag.
+ARG KONET_VERSION=0.0.0-dev
+ENV KONET_VERSION=${KONET_VERSION}
+
 # BEAM's JIT dual-maps code memory, which QEMU can't emulate — single-map it
 # so cross-platform image builds (CI building arm64 on amd64) don't crash.
 ENV ERL_FLAGS="+JMsingle true"

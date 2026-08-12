@@ -43,9 +43,9 @@ defmodule Konet.RateLimiter do
   defp max_binary_per_second,
     do: Application.get_env(:konet, :rate_limit_binary, @default_binary_per_second)
 
+  # Table owned by Konet.Tables — see the note there.
   @impl true
   def init(_) do
-    :ets.new(@table, [:named_table, :public, :set, {:write_concurrency, true}])
     schedule_cleanup()
     {:ok, %{}}
   end

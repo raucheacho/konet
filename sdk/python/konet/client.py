@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 from typing import Any
 from urllib.parse import urlencode
 
 import websockets
-from websockets.exceptions import ConnectionClosed, WebSocketException
+from websockets.exceptions import ConnectionClosed
 
 from .binary import BROADCAST, PUSH, decode_server_frame, encode_push
 from .channel import Channel
@@ -35,18 +34,24 @@ class KonetClient:
         heartbeat_interval: float = 30.0,
         reconnect_delay: float = 1.0,
         max_reconnect_tries: int = 10,
+        heartbeat_timeout: float = 10.0,
     ) -> None:
         self._url = url
         self._token = token
         self._heartbeat_interval = heartbeat_interval
         self._reconnect_delay = reconnect_delay
         self._max_reconnect_tries = max_reconnect_tries
+        # How long to wait for a heartbeat reply before declaring the socket
+        # dead. Keep it below the server's socket timeout (45s).
+        self._heartbeat_timeout = heartbeat_timeout
 
         self._ws: websockets.ClientConnection | None = None
         self._channels: dict[str, Channel] = {}
         self._ref_counter = 0
         self._connected = False
         self._tasks: list[asyncio.Task] = []
+        self._rejoin_task: asyncio.Task | None = None
+        self._pending_heartbeat_ref: str | None = None
 
     async def __aenter__(self) -> "KonetClient":
         await self.connect()
@@ -54,6 +59,11 @@ class KonetClient:
 
     async def __aexit__(self, *_: Any) -> None:
         await self.disconnect()
+
+    @property
+    def connected(self) -> bool:
+        """True while the socket is open and joins/sends can reach the server."""
+        return self._connected and self._ws is not None
 
     def _websocket_url(self) -> str:
         # Phoenix mounts the actual websocket transport at "<socket path>/websocket",
@@ -65,6 +75,7 @@ class KonetClient:
     async def connect(self) -> None:
         self._ws = await websockets.connect(self._websocket_url())
         self._connected = True
+        self._pending_heartbeat_ref = None
 
         self._tasks = [
             asyncio.create_task(self._read_loop()),
@@ -73,8 +84,18 @@ class KonetClient:
 
     async def disconnect(self) -> None:
         self._connected = False
+
         for task in self._tasks:
             task.cancel()
+        self._tasks = []
+
+        if self._rejoin_task is not None:
+            self._rejoin_task.cancel()
+            self._rejoin_task = None
+
+        for channel in list(self._channels.values()):
+            channel._socket_closed()
+
         if self._ws:
             await self._ws.close()
             self._ws = None
@@ -109,49 +130,55 @@ class KonetClient:
         return str(self._ref_counter)
 
     async def _read_loop(self) -> None:
-        reconnect_attempts = 0
         while self._connected:
+            ws = self._ws
+            if ws is None:
+                # Only reachable if a reconnect attempt left us without a
+                # socket. Reconnect owns the backoff; never spin here.
+                if not await self._reconnect():
+                    return
+                continue
+
             try:
-                if self._ws is None:
-                    await asyncio.sleep(0.1)
-                    continue
-
-                raw = await self._ws.recv()
-
-                # The opcode is what tells text from binary: websockets hands
-                # back bytes for a binary frame and str for a text one.
-                if isinstance(raw, (bytes, bytearray)):
-                    self._handle_binary(bytes(raw))
-                    continue
-
-                frame = json.loads(raw)
-
-                if not isinstance(frame, list) or len(frame) != 5:
-                    continue
-
-                _join_ref, _ref, topic, event, _payload = frame
-
-                if topic == "phoenix":
-                    continue
-
-                ch = self._channels.get(topic)
-                if ch:
-                    ch._receive(frame)
-
-                reconnect_attempts = 0
-
+                raw = await ws.recv()
             except ConnectionClosed:
                 if not self._connected:
-                    break
-                if reconnect_attempts >= self._max_reconnect_tries:
-                    break
-                delay = min(self._reconnect_delay * (2 ** reconnect_attempts), 30.0)
-                reconnect_attempts += 1
-                await asyncio.sleep(delay)
-                await self._reconnect()
-
+                    return
+                if not await self._reconnect():
+                    return
+                continue
             except asyncio.CancelledError:
-                break
+                raise
+
+            self._dispatch(raw)
+
+    def _dispatch(self, raw: str | bytes) -> None:
+        # The opcode is what tells text from binary: websockets hands back
+        # bytes for a binary frame and str for a text one.
+        if isinstance(raw, (bytes, bytearray)):
+            self._handle_binary(bytes(raw))
+            return
+
+        try:
+            frame = json.loads(raw)
+        except (ValueError, TypeError):
+            return
+
+        if not isinstance(frame, list) or len(frame) != 5:
+            return
+
+        _join_ref, ref, topic, _event, _payload = frame
+
+        if topic == "phoenix":
+            # The heartbeat reply is this client's only proof the server is
+            # still there — it is the liveness signal, not noise to discard.
+            if ref is not None and ref == self._pending_heartbeat_ref:
+                self._pending_heartbeat_ref = None
+            return
+
+        ch = self._channels.get(topic)
+        if ch:
+            ch._receive(frame)
 
     def _handle_binary(self, raw: bytes) -> None:
         """Route a binary frame to its channel.
@@ -173,18 +200,101 @@ class KonetClient:
             ch._receive_binary(frame.event, frame.data)
 
     async def _heartbeat_loop(self) -> None:
+        # Probe once per heartbeat_interval, sending the probe heartbeat_timeout
+        # before the end of the cycle so an unanswered one is caught within that
+        # timeout rather than a full interval later.
+        lead = max(self._heartbeat_interval - self._heartbeat_timeout, 0.0)
+
         while self._connected:
             try:
-                await asyncio.sleep(self._heartbeat_interval)
-                ref = self._next_ref()
-                await self._send([None, ref, "phoenix", "heartbeat", {}])
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                pass
+                await asyncio.sleep(lead)
+                if not self._connected:
+                    return
 
-    async def _reconnect(self) -> None:
+                ref = self._next_ref()
+                self._pending_heartbeat_ref = ref
+                try:
+                    await self._send([None, ref, "phoenix", "heartbeat", {}])
+                except Exception:
+                    self._pending_heartbeat_ref = None
+                    await asyncio.sleep(self._heartbeat_timeout)
+                    continue
+
+                await asyncio.sleep(self._heartbeat_timeout)
+
+                # Still outstanding: whatever the local socket claims, nothing
+                # is listening on the other end.
+                if self._connected and self._pending_heartbeat_ref == ref:
+                    await self._force_reconnect()
+
+            except asyncio.CancelledError:
+                return
+
+    async def _force_reconnect(self) -> None:
+        """Tear down a socket that is open locally but unreachable.
+
+        Closing it makes the read loop's recv() raise, so reconnection stays in
+        one place instead of racing this loop.
+        """
+        self._pending_heartbeat_ref = None
+        ws = self._ws
+        if ws is None:
+            return
         try:
-            self._ws = await websockets.connect(self._websocket_url())
+            await ws.close(code=4000, reason="heartbeat timeout")
         except Exception:
-            self._ws = None
+            pass  # already gone
+
+    async def _reconnect(self) -> bool:
+        """Re-open the socket with exponential backoff and restore the joins.
+
+        Returns False once max_reconnect_tries is exhausted, which ends the read
+        loop rather than leaving it awake with nothing to read.
+        """
+        # Every server-side join died with the socket. Marking the channels
+        # makes send() fail loudly instead of writing into a dead topic, and
+        # tells the rejoin which channels to restore.
+        for channel in list(self._channels.values()):
+            channel._socket_closed()
+
+        self._ws = None
+        self._pending_heartbeat_ref = None
+
+        for attempt in range(self._max_reconnect_tries):
+            if not self._connected:
+                return False
+
+            delay = min(self._reconnect_delay * (2 ** attempt), 30.0)
+            await asyncio.sleep(delay)
+
+            if not self._connected:
+                return False
+
+            try:
+                self._ws = await websockets.connect(self._websocket_url())
+            except Exception:
+                self._ws = None
+                continue
+
+            # The server knows nothing about the topics this client had joined
+            # on the previous socket. Re-issue phx_join — but from a task, not
+            # inline: a join awaits its reply, and that reply can only arrive
+            # through the read loop that is calling us.
+            if self._rejoin_task is not None:
+                self._rejoin_task.cancel()
+            self._rejoin_task = asyncio.create_task(self._rejoin_channels())
+            return True
+
+        self._connected = False
+        return False
+
+    async def _rejoin_channels(self) -> None:
+        for channel in list(self._channels.values()):
+            try:
+                await channel._rejoin()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # One channel failing to re-join (an expired token, a room that
+                # now refuses this client) must not stop the others.
+                continue

@@ -33,7 +33,7 @@ var ErrShortFrame = errors.New("konet: trame binaire tronquée")
 
 // BinaryFrame is a decoded binary message from the server.
 type BinaryFrame struct {
-	Kind byte
+	Kind  byte
 	Topic string
 	// Event name, or the reply status ("ok" / "error").
 	Event   string

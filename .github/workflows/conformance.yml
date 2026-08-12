@@ -1,0 +1,66 @@
+name: Conformance
+
+# The protocol is implemented four times and was verified only against four
+# separate mocks — nothing ever ran an SDK against the real server, so an
+# agreed-on change to a reply shape would have been caught by no test at all.
+#
+# Its own workflow rather than a job in ci.yml, because `paths:` filters apply
+# per workflow: this is the slowest thing in the matrix (it needs Elixir, Go,
+# Node and Python, and boots a real server), so it should not run for a
+# documentation change.
+on:
+  push:
+    branches: [main, develop]
+    paths: &conformance-paths
+      - "konet-server/**"
+      - "sdk/**"
+      - "conformance/**"
+      - ".github/workflows/conformance.yml"
+  pull_request:
+    paths: *conformance-paths
+  workflow_dispatch:
+
+jobs:
+  conformance:
+    name: SDKs vs a real server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.16.3"
+          otp-version: "26.2"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            konet-server/deps
+            konet-server/_build
+          key: mix-${{ runner.os }}-${{ hashFiles('konet-server/mix.lock') }}
+          restore-keys: mix-${{ runner.os }}-
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sdk/go/go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile the server
+        working-directory: konet-server
+        run: |
+          mix deps.get
+          mix compile
+
+      - name: Build the JS SDK
+        working-directory: sdk/js
+        run: npm ci && npm run build
+
+      - name: Run the scenario in every SDK
+        run: ./conformance/run.sh

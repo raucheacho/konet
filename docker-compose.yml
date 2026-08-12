@@ -22,7 +22,22 @@ services:
       KONET_ALLOWED_ORIGINS: "${KONET_ALLOWED_ORIGINS:-*}"
       KONET_RATE_LIMIT: "${KONET_RATE_LIMIT:-60}"
       KONET_CONN_RATE_LIMIT: "${KONET_CONN_RATE_LIMIT:-200}"
+      # Binary frames get their own budget: 20 ms audio is 50 frames/s on its
+      # own and would otherwise starve a talker's other events.
+      KONET_RATE_LIMIT_BINARY: "${KONET_RATE_LIMIT_BINARY:-120}"
+      KONET_FLOOR_MAX_HOLD_MS: "${KONET_FLOOR_MAX_HOLD_MS:-30000}"
+      # Set this when a reverse proxy terminates TLS in front (Coolify, Dokploy,
+      # Traefik, Nginx). Without it every connection carries the proxy's IP and
+      # KONET_CONN_RATE_LIMIT becomes one global budget — the deployment
+      # rate-limits itself. Leave it false when clients connect directly, or
+      # they could forge X-Forwarded-For to get a private budget.
+      KONET_TRUST_PROXY_HEADERS: "${KONET_TRUST_PROXY_HEADERS:-false}"
       KONET_HISTORY_LIMIT: "${KONET_HISTORY_LIMIT:-0}"
+      KONET_HISTORY_TTL: "${KONET_HISTORY_TTL:-900}"
+      # Logging every accepted broadcast makes one GenServer the serialization
+      # point for the whole server. Turn it off for high-throughput deployments;
+      # join/leave and floor entries are unaffected.
+      KONET_LOG_BROADCASTS: "${KONET_LOG_BROADCASTS:-true}"
       KONET_WEBHOOK_URL: "${KONET_WEBHOOK_URL:-}"
       KONET_WEBHOOK_SECRET: "${KONET_WEBHOOK_SECRET:-}"
       SECRET_KEY_BASE: "${SECRET_KEY_BASE:?SECRET_KEY_BASE env var is required}"

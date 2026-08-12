@@ -66,7 +66,13 @@ defmodule KonetWeb.RoomChannel do
       :ok ->
         Metrics.message_sent()
         Konet.History.record(socket.assigns.room_id, event, payload)
-        log_event("broadcast", %{room: socket.assigns.room_id, event: event})
+        # Every accepted broadcast writing to LogBuffer makes that one GenServer
+        # the serialization point for the whole server under load. Kept on by
+        # default because the Studio Logs page is most of its value, but a
+        # high-throughput deployment can turn it off with
+        # KONET_LOG_BROADCASTS=false without losing the low-rate join/leave and
+        # floor entries.
+        if log_broadcasts?(), do: log_event("broadcast", %{room: socket.assigns.room_id, event: event})
         broadcast!(socket, event, payload)
         {:noreply, socket}
 
@@ -90,13 +96,18 @@ defmodule KonetWeb.RoomChannel do
     user_id = socket.assigns.user_id
 
     case Konet.Floor.acquire(topic, user_id) do
-      {:ok, ^user_id} ->
+      {:ok, ^user_id, since} ->
         # Announced to everyone, including the holder: subscribers need to know
         # a stream is starting before its first frame arrives, and the holder
         # needs the same id to stamp its frames with.
-        broadcast!(socket, "konet:floor", %{holder: user_id, since: now_ms()})
+        #
+        # `since` is the moment the floor was actually taken, reported by Floor
+        # itself — not "now". They differ on a duplicate press, and a listener
+        # joining mid-stream needs the former to show how long someone has been
+        # talking.
+        broadcast!(socket, "konet:floor", %{holder: user_id, since: since})
         log_event("floor_acquire", %{room: socket.assigns.room_id, user: user_id})
-        {:reply, {:ok, %{holder: user_id}}, socket}
+        {:reply, {:ok, %{holder: user_id, since: since}}, socket}
 
       {:error, {:held, other}} ->
         {:reply, {:error, %{reason: "floor_held", holder: other}}, socket}
@@ -180,7 +191,10 @@ defmodule KonetWeb.RoomChannel do
       broadcast!(socket, "konet:floor", %{holder: nil, since: now_ms()})
     end
 
-    Metrics.connection_closed()
+    # No connection counting here: this runs once per *channel*, and pairing it
+    # with the per-*socket* increment in UserSocket made the gauge drift to zero
+    # on any client that joined more than one room. Konet.Metrics monitors the
+    # socket process instead.
     ChannelRegistry.channel_left(socket.assigns[:room_id] || "unknown")
 
     Konet.Webhooks.emit("member_left", %{
@@ -195,4 +209,6 @@ defmodule KonetWeb.RoomChannel do
   defp log_event(type, data) do
     Konet.LogBuffer.record(type, data)
   end
+
+  defp log_broadcasts?, do: Application.get_env(:konet, :log_broadcasts, true) != false
 end

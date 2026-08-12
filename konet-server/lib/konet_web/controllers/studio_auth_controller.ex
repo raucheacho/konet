@@ -46,7 +46,10 @@ defmodule KonetWeb.StudioAuthController do
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Konet Studio — Sign in</title>
-        <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+        <!-- No webfont link: this was the only outbound network dependency in
+             the whole server, and it made the login page of an air-gapped or
+             firewalled deployment wait on a request that could never finish.
+             app.css already declares system-font fallbacks. -->
         <link rel="stylesheet" href="/assets/app.css" />
       </head>
       <body>

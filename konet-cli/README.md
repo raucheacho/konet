@@ -8,8 +8,12 @@ Konet is a lightweight, self-hosted alternative to managed realtime services. It
 
 - **Channels** — pub/sub over WebSockets with room scoping  
 - **Presence** — track who is online, with metadata  
-- **JWT Auth** — stateless token validation built-in  
-- **Rate Limiting** — per-socket message throttling  
+- **Broadcast** — low-latency ephemeral events, with optional in-memory history replay for late joiners  
+- **Binary frames** — media-rate transport with floor control, for push-to-talk and half-duplex audio  
+- **JWT Auth** — stateless HMAC tokens, with per-channel scoping via token claims  
+- **Rate Limiting** — per-socket message and per-IP connection throttling  
+- **Webhooks** — POST channel/member lifecycle events to your backend, optionally HMAC-signed  
+- **Prometheus Metrics** — `/metrics` endpoint for connections, channels, and throughput  
 - **Studio Dashboard** — LiveView admin UI for monitoring, keys, and broadcast  
 
 ## Quick Start
@@ -20,8 +24,9 @@ Konet is a lightweight, self-hosted alternative to managed realtime services. It
 # Install the CLI
 brew install raucheacho/tap/konet
 
-# Initialize and start
+# Initialize, generate keys, and start
 konet init
+konet keys generate
 konet start
 
 # Open the studio
@@ -58,18 +63,28 @@ docker run -d --name konet -p 4000:4000 \
 | Language | Package | Status |
 |----------|---------|--------|
 | JavaScript | `@raucheacho/konet-js` | ✅ |
+| React Native | `@raucheacho/konet-rn` | ✅ |
 | Go | `github.com/raucheacho/konet/sdk/go` | ✅ |
 | Python | `konet` | ✅ |
 
 ## Documentation
 
-Full docs live in [`./docs`](./docs). To run them locally:
+Published at **https://raucheacho.github.io/konet/**, built from [`./docs`](./docs)
+— a Nextra site deployed to GitHub Pages on every push to `main`.
+
+To run it locally:
 
 ```bash
 cd docs
-npm install
-npm run dev
+bun install
+bun run dev        # http://localhost:3000
 ```
+
+`bun run build` produces a static export in `docs/out/`. CI builds it on every
+push, so a broken page fails the build rather than shipping.
+
+The deploy sets `NEXT_PUBLIC_BASE_PATH` because a project site is served under
+`/konet`. Locally it is unset, so the dev server stays at `/`.
 
 ## License
 

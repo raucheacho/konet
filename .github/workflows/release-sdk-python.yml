@@ -27,10 +27,51 @@ jobs:
       - name: Install build tools
         run: pip install build
 
-      - name: Build package
+      # Rewrites the version in [project] and in konet/__init__.py.
+      #
+      # The sed used to hit the first `version = ` line in the whole file, which
+      # only happens to be the right one because [build-system] has no such key.
+      # __version__ was not rewritten at all, so every published wheel reported
+      # 0.1.0.
+      - name: Set version
         run: |
-          sed -i "s/^version = .*/version = \"${GITHUB_REF_NAME#v}\"/" pyproject.toml
-          python -m build
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          python - "$VERSION" <<'PY'
+          import pathlib, re, sys
+
+          version = sys.argv[1]
+
+          pyproject = pathlib.Path("pyproject.toml")
+          text = pyproject.read_text()
+          updated, count = re.subn(
+              r'(?ms)(^\[project\].*?^version\s*=\s*)"[^"]*"',
+              lambda m: f'{m.group(1)}"{version}"',
+              text,
+              count=1,
+          )
+          if count != 1:
+              sys.exit("could not find the [project] version in pyproject.toml")
+          pyproject.write_text(updated)
+
+          init = pathlib.Path("konet/__init__.py")
+          text = init.read_text()
+          updated, count = re.subn(
+              r'^__version__\s*=\s*"[^"]*"',
+              f'__version__ = "{version}"',
+              text,
+              count=1,
+              flags=re.M,
+          )
+          if count != 1:
+              sys.exit("could not find __version__ in konet/__init__.py")
+          init.write_text(updated)
+
+          print(f"version set to {version}")
+          PY
+
+      - name: Build package
+        run: python -m build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

@@ -10,20 +10,23 @@ defmodule KonetWeb.Studio.KeysLive do
        service_key: Application.get_env(:konet, :service_key) || get_key_from_env("KONET_SERVICE_KEY"),
        jwt_secret: mask_secret(Application.get_env(:konet, :jwt_secret, "")),
        rotated: false,
+       rotation: nil,
+       secret_file: Konet.Auth.secret_file(),
        show_secret: false
      )}
   end
 
   @impl true
   def handle_event("rotate", _, socket) do
-    %{jwt_secret: secret, anon_key: anon, service_key: service} = Konet.Auth.rotate!()
+    %{jwt_secret: secret, anon_key: anon, service_key: service} = result = Konet.Auth.rotate!()
 
     {:noreply,
      assign(socket,
        anon_key: anon,
        service_key: service,
        jwt_secret: mask_secret(secret),
-       rotated: true
+       rotated: true,
+       rotation: result
      )}
   end
 
@@ -42,12 +45,30 @@ defmodule KonetWeb.Studio.KeysLive do
         them without the others.
       </p>
 
-      <%= if @rotated do %>
+      <%= if @rotated and @rotation.persisted do %>
         <div class="result-banner result-ok">
-          Rotated — every previously issued token (including this browser's own session-independent
-          keys) just stopped working. Copy the new values below into your
-          <span class="mono">konet.config.toml</span> or env vars and redeploy, or they're lost
-          on the next restart.
+          Rotated and saved to <span class="mono"><%= @rotation.path %></span>. Every previously
+          issued token just stopped working; this server will keep using the new secret after a
+          restart. Make sure that path is on a volume that survives redeploys.
+        </div>
+      <% end %>
+
+      <%= if @rotated and not @rotation.persisted and @rotation.error do %>
+        <div class="result-banner result-err">
+          Rotated, but writing <span class="mono"><%= @rotation.path %></span> failed:
+          <%= @rotation.error %>. The new secret is live in this process only — copy the values
+          below somewhere safe now, or a restart reverts to the old secret and locks out every
+          client that stored the new anon key.
+        </div>
+      <% end %>
+
+      <%= if @rotated and not @rotation.persisted and is_nil(@rotation.error) do %>
+        <div class="result-banner result-err">
+          Rotated — in memory only. Every previously issued token just stopped working, and
+          <strong>a restart will revert to the old secret</strong>, locking out any client that
+          stored the new anon key. Copy the values below into your env vars now, or set
+          <span class="mono">KONET_SECRET_FILE</span> to a writable path so rotation persists
+          by itself.
         </div>
       <% end %>
 
@@ -97,7 +118,15 @@ defmodule KonetWeb.Studio.KeysLive do
             <%= @jwt_secret %>
           <% end %>
         </div>
-        <div class="key-hint muted">Set via KONET_JWT_SECRET env var or konet.config.toml.</div>
+        <div class="key-hint muted">
+          Set via KONET_JWT_SECRET env var or konet.config.toml.
+          <%= if @secret_file do %>
+            Rotation persists to <span class="mono"><%= @secret_file %></span>.
+          <% else %>
+            <strong>Rotation is in-memory only</strong> — set
+            <span class="mono">KONET_SECRET_FILE</span> to make it survive a restart.
+          <% end %>
+        </div>
       </div>
 
       <button class="btn btn-danger" phx-click="rotate" data-confirm="Rotate the JWT secret? Every anon/service key issued so far will stop working immediately.">

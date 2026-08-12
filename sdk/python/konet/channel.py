@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections import defaultdict
 from typing import Any, Callable, Awaitable
 
@@ -30,8 +29,15 @@ class Channel:
         # check a type it already knows.
         self._binary_handlers: dict[str, list[BinaryHandler]] = defaultdict(list)
         self._reply_futures: dict[str, asyncio.Future] = {}
+        # Whether the application wants this channel joined. Survives socket
+        # drops, so a reconnect knows what to restore; cleared only by
+        # unsubscribe(), so a channel the caller deliberately left is never
+        # silently re-joined.
+        self._wants_join = False
 
     async def subscribe(self) -> None:
+        self._wants_join = True
+
         if self._state in ("joined", "joining"):
             return
 
@@ -39,33 +45,60 @@ class Channel:
         ref = self._next_ref()
         self._join_ref = ref
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
         self._reply_futures[ref] = fut
 
-        await self._send_fn([ref, ref, self.topic, "phx_join", {}])
+        try:
+            await self._send_fn([ref, ref, self.topic, "phx_join", {}])
+        except Exception:
+            self._state = "errored"
+            self._reply_futures.pop(ref, None)
+            raise
 
-        reply = await asyncio.wait_for(fut, timeout=10.0)
+        try:
+            reply = await asyncio.wait_for(fut, timeout=10.0)
+        except (asyncio.TimeoutError, ConnectionError):
+            self._state = "errored"
+            self._reply_futures.pop(ref, None)
+            raise
+
+        # A reply from a join that a reconnect already superseded.
+        if self._join_ref != ref:
+            return
+
         if reply.get("status") == "ok":
             self._state = "joined"
         else:
             self._state = "errored"
+            # _wants_join stays set: a rejection is often a stale or expired
+            # token, and the next reconnect should try again with whatever
+            # token the client holds by then.
             raise RuntimeError(f"Failed to join {self.topic}: {reply.get('response')}")
 
     async def unsubscribe(self) -> None:
+        self._wants_join = False
+
         if self._state != "joined":
+            self._state = "idle"
+            self._join_ref = None
             return
+
         ref = self._next_ref()
         self._state = "idle"
-        await self._send_fn([self._join_ref, ref, self.topic, "phx_leave", {}])
+        join_ref = self._join_ref
         self._join_ref = None
+        await self._send_fn([join_ref, ref, self.topic, "phx_leave", {}])
 
     def on(self, event: str, handler: EventHandler) -> Callable[[], None]:
         """Register an event handler. Returns an unsubscribe callable."""
         self._handlers[event].append(handler)
 
         def off() -> None:
-            self._handlers[event].remove(handler)
+            try:
+                self._handlers[event].remove(handler)
+            except ValueError:
+                pass  # already removed
 
         return off
 
@@ -98,7 +131,10 @@ class Channel:
         self._binary_handlers[event].append(handler)
 
         def off() -> None:
-            self._binary_handlers[event].remove(handler)
+            try:
+                self._binary_handlers[event].remove(handler)
+            except ValueError:
+                pass  # already removed
 
         return off
 
@@ -122,7 +158,7 @@ class Channel:
             raise RuntimeError(f"Channel {self.topic} is not joined")
 
         ref = self._next_ref()
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._reply_futures[ref] = fut
 
         await self._send_fn([self._join_ref, ref, self.topic, event, {}])
@@ -132,6 +168,9 @@ class Channel:
         except asyncio.TimeoutError:
             self._reply_futures.pop(ref, None)
             raise RuntimeError(f"{event} sans réponse") from None
+        except ConnectionError:
+            self._reply_futures.pop(ref, None)
+            raise
 
         if reply.get("status") != "ok":
             refusal = reply.get("response") or {}
@@ -142,6 +181,38 @@ class Channel:
             raise RuntimeError(f"{event} refusé ({reason})")
 
         return reply.get("response") or {}
+
+    # ── Reconnection hooks, called by KonetClient ───────────────────────────
+
+    def _socket_closed(self) -> None:
+        """The socket went away, taking the server-side join with it.
+
+        Marks the channel as no longer joined so send() fails loudly instead of
+        writing into a dead topic, and tells the next _rejoin() what to restore.
+        """
+        if self._state in ("joined", "joining"):
+            self._state = "idle"
+        self._join_ref = None
+
+        # Anything waiting on a reply will never get one: the socket that
+        # carried the request is gone. Fail them rather than let them sit until
+        # their 10s timeout.
+        pending, self._reply_futures = self._reply_futures, {}
+        for fut in pending.values():
+            if not fut.done():
+                fut.set_exception(
+                    ConnectionError(f"socket closed before {self.topic} replied")
+                )
+
+    async def _rejoin(self) -> None:
+        """The socket is (re)open — restore the join the server lost."""
+        if not self._wants_join:
+            return
+        if self._state in ("joined", "joining"):
+            return
+        await self.subscribe()
+
+    # ── Inbound dispatch ────────────────────────────────────────────────────
 
     def _receive_binary(self, event: str, data: bytes) -> None:
         """Called by the client when a binary frame arrives for this topic."""
@@ -159,6 +230,11 @@ class Channel:
             if fut and not fut.done():
                 fut.set_result(payload if isinstance(payload, dict) else {})
             return
+
+        if event == "phx_error":
+            self._state = "errored"
+        elif event == "phx_close":
+            self._state = "idle"
 
         for handler in list(self._handlers.get(event, [])):
             result = handler(payload)
