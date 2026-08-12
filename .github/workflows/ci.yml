@@ -32,6 +32,31 @@ jobs:
       - run: mix compile --warnings-as-errors
       - run: mix test
 
+  # GoReleaser runs with workdir: konet-cli and refuses archive paths outside
+  # it, so `files: [- src: ../LICENSE]` fails and the two files have to exist as
+  # copies. Nothing kept them in sync, and the CLI README drifted far enough to
+  # still advertise three SDKs — that stale copy shipped inside every release
+  # archive.
+  cli-docs-in-sync:
+    name: CLI (docs in sync)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check konet-cli copies match the root
+        run: |
+          status=0
+          for file in README.md LICENSE; do
+            if ! diff -q "$file" "konet-cli/$file" >/dev/null; then
+              echo "::error file=konet-cli/$file::konet-cli/$file has drifted from ./$file."
+              echo "  These are shipped inside the release archives. Refresh with:"
+              echo "    cp $file konet-cli/$file"
+              diff -u "$file" "konet-cli/$file" || true
+              status=1
+            fi
+          done
+          exit $status
+
   cli:
     name: CLI (Go)
     runs-on: ubuntu-latest
@@ -64,6 +89,9 @@ jobs:
 
       - run: go build ./...
       - run: go vet ./...
+      # -race because the client runs a read loop and a heartbeat loop against
+      # shared channel state; the reconnect path is exactly where that races.
+      - run: go test -race ./...
 
   sdk-js:
     name: SDK (JavaScript)
@@ -118,7 +146,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      # compileall alone is a syntax check: it never ran tests/, so the binary
+      # framing and the reconnect state machine were unverified in CI.
+      - run: pip install -e '.[dev]'
       - run: python -m compileall konet
+      - run: pytest -q
 
   docs:
     name: Docs (Nextra)
