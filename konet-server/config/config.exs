@@ -11,15 +11,24 @@ config :konet, KonetWeb.Endpoint,
   live_view: [signing_salt: "Xp4kR9mN"]
 
 config :konet,
-  jwt_secret: "change-me-in-production-min-32-chars!!",
+  # Overridden in every environment: runtime.exs raises in :prod, generates a
+  # random one in :dev, and test.exs pins its own. Left here only so
+  # Application.get_env has a key to find during compilation.
+  jwt_secret: nil,
+  secret_file: nil,
   anon_key: nil,
   service_key: nil,
   studio_password: nil,
   rate_limit_messages: 60,
   rate_limit_connections: 200,
   history_limit: 0,
+  history_ttl_seconds: 900,
+  allowed_origins: nil,
+  trust_proxy_headers: false,
+  log_broadcasts: true,
   webhook_url: nil,
-  webhook_secret: nil
+  webhook_secret: nil,
+  webhook_retries: 3
 
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",
