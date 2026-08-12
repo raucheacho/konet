@@ -11,7 +11,9 @@ defmodule KonetWeb.UserSocket do
          {:ok, claims} <- Konet.Auth.verify(token) do
       socket_id = generate_id()
 
-      Konet.Metrics.connection_opened()
+      # self() is the socket transport process: Konet.Metrics monitors it and
+      # decrements when it dies, so the gauge cannot drift.
+      Konet.Metrics.connection_opened(self())
 
       {:ok,
        socket
@@ -30,10 +32,49 @@ defmodule KonetWeb.UserSocket do
   @impl true
   def id(socket), do: "user_socket:#{socket.assigns.socket_id}"
 
-  defp extract_ip(%{peer_data: %{address: addr}}),
-    do: :inet.ntoa(addr) |> to_string()
+  # Behind a reverse proxy every connection carries the proxy's IP, which turns
+  # the per-IP connection limit into a single global budget — the deployment
+  # rate-limits itself. The forwarded header is the only way to see the real
+  # client, but trusting it unconditionally is worse than not reading it at all:
+  # anyone could then spoof an IP and get their own private budget. So it is
+  # honoured only when the operator asserts there is a proxy in front
+  # (KONET_TRUST_PROXY_HEADERS=true), which is exactly the case where the
+  # header cannot be set by the client.
+  defp extract_ip(connect_info) do
+    if trust_proxy_headers?() do
+      forwarded_ip(connect_info) || peer_ip(connect_info)
+    else
+      peer_ip(connect_info)
+    end
+  end
 
-  defp extract_ip(_), do: "unknown"
+  defp forwarded_ip(%{x_headers: headers}) when is_list(headers) do
+    headers
+    |> Enum.find_value(fn
+      {"x-forwarded-for", value} -> value
+      _ -> nil
+    end)
+    |> case do
+      nil ->
+        nil
+
+      value ->
+        # Leftmost entry is the original client; the rest are intermediate
+        # proxies appending to the chain.
+        value |> String.split(",") |> List.first() |> String.trim() |> presence()
+    end
+  end
+
+  defp forwarded_ip(_), do: nil
+
+  defp peer_ip(%{peer_data: %{address: addr}}), do: :inet.ntoa(addr) |> to_string()
+  defp peer_ip(_), do: "unknown"
+
+  defp presence(""), do: nil
+  defp presence(value), do: value
+
+  defp trust_proxy_headers?,
+    do: Application.get_env(:konet, :trust_proxy_headers, false) == true
 
   defp generate_id,
     do: :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
