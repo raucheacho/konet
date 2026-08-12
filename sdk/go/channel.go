@@ -3,6 +3,7 @@ package konet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -15,6 +16,11 @@ const (
 	channelJoined  channelState = iota
 	channelErrored channelState = iota
 )
+
+// ErrSocketClosed reports a request whose socket went away before the server
+// replied. Distinct from a refusal: nothing is known about whether the server
+// saw it.
+var ErrSocketClosed = errors.New("konet: socket fermée avant la réponse")
 
 type phxFrame struct {
 	JoinRef *string
@@ -35,24 +41,45 @@ type EventHandler func(payload interface{})
 // the duration of the call — copy it to keep it.
 type BinaryHandler func(data []byte)
 
+// Handlers are stored with an identity of their own rather than compared by
+// value: Go gives no usable equality for funcs, and comparing code pointers
+// (fmt.Sprintf("%p", h)) matches distinct closures that share a body. An
+// explicit id makes the unsubscribe returned by On/OnBinary exact, and keeping
+// them in a slice preserves registration order.
+type eventSub struct {
+	id uint64
+	fn EventHandler
+}
+
+type binarySub struct {
+	id uint64
+	fn BinaryHandler
+}
+
 // Channel represents a subscription to a Konet channel topic.
 type Channel struct {
 	topic string
-	state channelState
 
 	mu       sync.RWMutex
-	handlers map[string][]EventHandler
+	state    channelState
+	handlers map[string][]eventSub
 	replies  map[string]chan interface{}
+	joinRef  *string
+	// wantsJoin records whether the application wants this channel joined. It
+	// survives socket drops, so a reconnect knows what to restore, and is
+	// cleared only by Unsubscribe — a channel the caller deliberately left is
+	// never silently re-joined.
+	wantsJoin  bool
+	handlerSeq uint64
 
 	sendFn       func(phxFrame) error
 	sendBinaryFn func(joinRef, ref, topic, event string, data []byte) error
 	nextRef      func() string
-	joinRef      *string
 
 	// binaryHandlers are separate from handlers because a binary event
 	// delivers []byte, not a decoded payload, and mixing the two would force
 	// every handler to type-switch on something it already knows.
-	binaryHandlers map[string][]BinaryHandler
+	binaryHandlers map[string][]binarySub
 }
 
 func newChannel(
@@ -64,8 +91,8 @@ func newChannel(
 	return &Channel{
 		topic:          topic,
 		state:          channelIdle,
-		handlers:       make(map[string][]EventHandler),
-		binaryHandlers: make(map[string][]BinaryHandler),
+		handlers:       make(map[string][]eventSub),
+		binaryHandlers: make(map[string][]binarySub),
 		replies:        make(map[string]chan interface{}),
 		sendFn:         sendFn,
 		sendBinaryFn:   sendBinaryFn,
@@ -73,9 +100,21 @@ func newChannel(
 	}
 }
 
+// Topic returns the channel's topic.
+func (c *Channel) Topic() string { return c.topic }
+
+// Joined reports whether the server has confirmed this channel's join on the
+// current socket.
+func (c *Channel) Joined() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.state == channelJoined
+}
+
 // Subscribe joins the channel. Blocks until the server confirms the join.
 func (c *Channel) Subscribe(ctx context.Context) error {
 	c.mu.Lock()
+	c.wantsJoin = true
 	if c.state == channelJoined || c.state == channelJoining {
 		c.mu.Unlock()
 		return nil
@@ -103,20 +142,39 @@ func (c *Channel) Subscribe(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
+		c.mu.Lock()
+		delete(c.replies, ref)
+		if c.state == channelJoining {
+			c.state = channelIdle
+		}
+		c.mu.Unlock()
 		return ctx.Err()
-	case reply := <-replyCh:
-		m, ok := reply.(map[string]interface{})
+
+	case reply, ok := <-replyCh:
 		if !ok {
+			// socketClosed closed the channel: the socket went away before the
+			// server answered.
+			return ErrSocketClosed
+		}
+
+		m, isMap := reply.(map[string]interface{})
+		if !isMap {
+			c.setState(channelErrored)
 			return fmt.Errorf("subscribe: unexpected reply type")
 		}
 		if m["status"] != "ok" {
-			c.mu.Lock()
-			c.state = channelErrored
-			c.mu.Unlock()
+			// wantsJoin stays set: a rejection is often a stale or expired
+			// token, and the next reconnect should try again with whatever
+			// token the client holds by then.
+			c.setState(channelErrored)
 			return fmt.Errorf("subscribe: server error: %v", m["response"])
 		}
+
 		c.mu.Lock()
-		c.state = channelJoined
+		// A reply from a join that a reconnect already superseded.
+		if c.joinRef != nil && *c.joinRef == ref {
+			c.state = channelJoined
+		}
 		c.mu.Unlock()
 		return nil
 	}
@@ -125,13 +183,17 @@ func (c *Channel) Subscribe(ctx context.Context) error {
 // Unsubscribe leaves the channel.
 func (c *Channel) Unsubscribe() error {
 	c.mu.Lock()
+	c.wantsJoin = false
 	if c.state != channelJoined {
+		c.state = channelIdle
+		c.joinRef = nil
 		c.mu.Unlock()
 		return nil
 	}
 	c.state = channelIdle
 	ref := c.nextRef()
 	jr := c.joinRef
+	c.joinRef = nil
 	c.mu.Unlock()
 
 	return c.sendFn(phxFrame{
@@ -143,23 +205,24 @@ func (c *Channel) Unsubscribe() error {
 	})
 }
 
-// On registers a handler for an event. Returns an unsubscribe function.
+// On registers a handler for an event. Returns a function that removes it.
 func (c *Channel) On(event string, handler EventHandler) func() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.handlers[event] = append(c.handlers[event], handler)
+	c.handlerSeq++
+	id := c.handlerSeq
+	c.handlers[event] = append(c.handlers[event], eventSub{id: id, fn: handler})
+	c.mu.Unlock()
 
 	return func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		list := c.handlers[event]
-		updated := make([]EventHandler, 0, len(list))
-		for _, h := range list {
-			if fmt.Sprintf("%p", h) != fmt.Sprintf("%p", handler) {
-				updated = append(updated, h)
+		for i, sub := range list {
+			if sub.id == id {
+				c.handlers[event] = append(list[:i:i], list[i+1:]...)
+				return
 			}
 		}
-		c.handlers[event] = updated
 	}
 }
 
@@ -216,17 +279,20 @@ func (c *Channel) SendBinary(event string, data []byte) error {
 // function that removes it.
 func (c *Channel) OnBinary(event string, handler BinaryHandler) func() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.binaryHandlers[event] = append(c.binaryHandlers[event], handler)
-	index := len(c.binaryHandlers[event]) - 1
+	c.handlerSeq++
+	id := c.handlerSeq
+	c.binaryHandlers[event] = append(c.binaryHandlers[event], binarySub{id: id, fn: handler})
+	c.mu.Unlock()
 
 	return func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		list := c.binaryHandlers[event]
-		if index < len(list) {
-			c.binaryHandlers[event] = append(list[:index], list[index+1:]...)
+		for i, sub := range list {
+			if sub.id == id {
+				c.binaryHandlers[event] = append(list[:i:i], list[i+1:]...)
+				return
+			}
 		}
 	}
 }
@@ -288,7 +354,11 @@ func (c *Channel) request(ctx context.Context, event string) (interface{}, error
 	}
 
 	select {
-	case payload := <-replies:
+	case payload, ok := <-replies:
+		if !ok {
+			return nil, ErrSocketClosed
+		}
+
 		var reply struct {
 			Status   string      `json:"status"`
 			Response interface{} `json:"response"`
@@ -317,17 +387,58 @@ func (c *Channel) request(ctx context.Context, event string) (interface{}, error
 	}
 }
 
+// ── Reconnection hooks, called by Client ────────────────────────────────────
+
+// socketClosed marks the channel as no longer joined, because the socket that
+// carried the join is gone. Anything waiting on a reply is released: the server
+// will never answer on a socket that no longer exists.
+func (c *Channel) socketClosed() {
+	c.mu.Lock()
+	if c.state == channelJoined || c.state == channelJoining {
+		c.state = channelIdle
+	}
+	c.joinRef = nil
+	replies := c.replies
+	c.replies = make(map[string]chan interface{})
+	c.mu.Unlock()
+
+	for _, ch := range replies {
+		close(ch)
+	}
+}
+
+// rejoin restores a join the server lost, unless the caller deliberately left.
+func (c *Channel) rejoin(ctx context.Context) error {
+	c.mu.RLock()
+	wants := c.wantsJoin
+	state := c.state
+	c.mu.RUnlock()
+
+	if !wants || state == channelJoined || state == channelJoining {
+		return nil
+	}
+	return c.Subscribe(ctx)
+}
+
+func (c *Channel) setState(s channelState) {
+	c.mu.Lock()
+	c.state = s
+	c.mu.Unlock()
+}
+
+// ── Inbound dispatch ────────────────────────────────────────────────────────
+
 // receiveBinary dispatches an incoming binary frame.
 func (c *Channel) receiveBinary(event string, data []byte) {
 	c.mu.RLock()
-	handlers := append([]BinaryHandler{}, c.binaryHandlers[event]...)
+	subs := append([]binarySub{}, c.binaryHandlers[event]...)
 	c.mu.RUnlock()
 
 	// Synchronous, unlike receive: audio frames must reach the play-out buffer
 	// in the order they arrived, and one goroutine per frame would not promise
 	// that.
-	for _, h := range handlers {
-		h(data)
+	for _, sub := range subs {
+		sub.fn(data)
 	}
 }
 
@@ -347,11 +458,17 @@ func (c *Channel) receive(frame phxFrame) {
 		}
 
 	default:
+		if frame.Event == "phx_error" {
+			c.setState(channelErrored)
+		} else if frame.Event == "phx_close" {
+			c.setState(channelIdle)
+		}
+
 		c.mu.RLock()
-		handlers := append([]EventHandler{}, c.handlers[frame.Event]...)
+		subs := append([]eventSub{}, c.handlers[frame.Event]...)
 		c.mu.RUnlock()
-		for _, h := range handlers {
-			go h(frame.Payload)
+		for _, sub := range subs {
+			go sub.fn(frame.Payload)
 		}
 	}
 }

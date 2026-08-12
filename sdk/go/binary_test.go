@@ -120,7 +120,7 @@ func TestDecodeRejectsTruncatedFrame(t *testing.T) {
 	// One bad frame must not take down the socket every other channel shares,
 	// so these report an error rather than panicking on a slice bound.
 	for name, raw := range map[string][]byte{
-		"vide":              {},
+		"vide":               {},
 		"diffusion tronquée": {binaryBroadcast, 200, 200, 1},
 		"réponse tronquée":   {binaryReply, 9, 9, 9, 9, 1},
 		"type inconnu":       {99, 1, 2},
