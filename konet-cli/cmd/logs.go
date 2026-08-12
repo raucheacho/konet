@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/raucheacho/konet/konet-cli/internal/docker"
@@ -16,9 +15,11 @@ var logsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "Stream server logs",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
-		if logsFollow {
-			ctx = context.Background() // runs until Ctrl+C
+		// Bound to the command's context so Ctrl+C ends a --follow stream
+		// cleanly instead of relying on the process dying.
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
 		}
 
 		cli, err := docker.New()
@@ -32,14 +33,7 @@ var logsCmd = &cobra.Command{
 			return fmt.Errorf("konet-server is not running — use `konet start`")
 		}
 
-		reader, err := cli.Logs(ctx, logsFollow)
-		if err != nil {
-			return fmt.Errorf("cannot get logs: %w", err)
-		}
-		defer reader.Close()
-
-		_, err = io.Copy(os.Stdout, reader)
-		return err
+		return cli.Logs(ctx, logsFollow, os.Stdout, os.Stderr)
 	},
 }
 

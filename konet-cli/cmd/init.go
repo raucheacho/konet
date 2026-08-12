@@ -29,12 +29,16 @@ var initCmd = &cobra.Command{
 			return fmt.Errorf("failed to write config: %w", err)
 		}
 
-		fmt.Printf("✓ Created %s\n\n", config.ConfigFileName)
+		fmt.Printf("✓ Created %s\n", config.ConfigFileName)
+		fmt.Println("  jwt_secret and secret_key_base were generated for you.")
+		fmt.Println()
 		fmt.Println("Next steps:")
-		fmt.Println("  1. Edit konet.config.toml — set jwt_secret to a strong random value")
-		fmt.Println("  2. Run: konet keys generate — to create anon_key and service_key")
-		fmt.Println("  3. Run: konet start         — to start the server")
-		fmt.Println("  4. Run: konet studio        — to open the dashboard")
+		fmt.Println("  1. Run: konet keys generate — to create anon_key and service_key")
+		fmt.Println("  2. Run: konet start         — to start the server")
+		fmt.Println("  3. Run: konet studio        — to open the dashboard")
+		fmt.Println()
+		fmt.Printf("⚠ %s holds your signing secret — keep it out of version control.\n",
+			config.ConfigFileName)
 		return nil
 	},
 }
