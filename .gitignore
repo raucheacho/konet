@@ -52,6 +52,13 @@ sdk/python/.venv/
 .venv/
 
 # ------------------------------------------------------------
+# Conformance harness (built artifacts, not sources)
+# ------------------------------------------------------------
+conformance/python/.venv/
+conformance/js/node_modules/
+conformance/js/package-lock.json
+
+# ------------------------------------------------------------
 # Docker
 # ------------------------------------------------------------
 .docker/
