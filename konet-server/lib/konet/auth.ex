@@ -3,6 +3,7 @@ defmodule Konet.Auth do
   JWT authentication. Supports anon, service, and user-issued tokens.
   All tokens are HMAC-SHA256 signed with the configured jwt_secret.
   """
+  require Logger
 
   def verify(token) when is_binary(token) do
     signer = Joken.Signer.create("HS256", jwt_secret())
@@ -71,10 +72,20 @@ defmodule Konet.Auth do
 
   @doc """
   Rotates the JWT signing secret and re-signs anon_key/service_key with it.
-  This immediately invalidates every previously issued token (there is no way
-  to revoke a single key without the others, since they all share one secret) —
-  the new secret only lives in this running process, so it must be copied into
-  konet.config.toml / your env vars or it is lost on restart.
+
+  This immediately invalidates every previously issued token — there is no way
+  to revoke a single key without the others, since they all share one secret.
+
+  Durability depends on `KONET_SECRET_FILE`:
+
+    * **set** — the new secret is written there (mode 0600) and read back on the
+      next boot, so the rotation survives a restart. Mount it on a volume.
+    * **unset** — the secret lives only in this process. A restart silently
+      reverts to the old one, locking out any client that stored the new anon
+      key. That was the only behaviour available before, and it is why the
+      return value now says which happened.
+
+  Returns `%{jwt_secret:, anon_key:, service_key:, persisted:, path:, error:}`.
   """
   def rotate! do
     new_secret = :crypto.strong_rand_bytes(32) |> Base.encode16(case: :lower)
@@ -86,7 +97,50 @@ defmodule Konet.Auth do
     Application.put_env(:konet, :anon_key, anon_key)
     Application.put_env(:konet, :service_key, service_key)
 
-    %{jwt_secret: new_secret, anon_key: anon_key, service_key: service_key}
+    {persisted, path, error} = persist_secret(new_secret)
+
+    %{
+      jwt_secret: new_secret,
+      anon_key: anon_key,
+      service_key: service_key,
+      persisted: persisted,
+      path: path,
+      error: error
+    }
+  end
+
+  @doc "Path the signing secret is persisted to, or nil when rotation is in-memory only."
+  def secret_file, do: Application.get_env(:konet, :secret_file)
+
+  defp persist_secret(secret) do
+    case secret_file() do
+      path when is_binary(path) and path != "" ->
+        case write_secret(path, secret) do
+          :ok ->
+            Logger.info("konet: signing secret rotated and persisted to #{path}")
+            {true, path, nil}
+
+          {:error, reason} ->
+            Logger.error(
+              "konet: signing secret rotated but could NOT be written to #{path}: " <>
+                "#{:file.format_error(reason)}. It will be lost on restart."
+            )
+
+            {false, path, :file.format_error(reason) |> to_string()}
+        end
+
+      _ ->
+        {false, nil, nil}
+    end
+  end
+
+  defp write_secret(path, secret) do
+    with :ok <- File.write(path, secret),
+         # The file is the signing secret in plain text; anything wider than
+         # owner-only defeats the point of persisting it at all.
+         :ok <- File.chmod(path, 0o600) do
+      :ok
+    end
   end
 
   defp jwt_secret do

@@ -1,10 +1,15 @@
 defmodule Konet.MixProject do
   use Mix.Project
 
+  # The release tag is the source of truth. CI passes it in as a build arg, so
+  # /api/health and the Studio report what actually shipped instead of a literal
+  # that nobody remembers to bump.
+  @version System.get_env("KONET_VERSION") || "0.0.0-dev"
+
   def project do
     [
       app: :konet,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.16",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,

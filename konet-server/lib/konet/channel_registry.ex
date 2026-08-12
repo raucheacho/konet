@@ -21,11 +21,12 @@ defmodule Konet.ChannelRegistry do
     |> Enum.sort_by(& &1.id)
   end
 
+  # The table is created and owned by Konet.Tables, not here: an ETS table dies
+  # with its owner, so creating it in this init/1 meant a crash of this
+  # GenServer emptied the channel list while sockets were still connected — and
+  # it never recovered, since counts are only incremented on join.
   @impl true
-  def init(_) do
-    :ets.new(@table, [:named_table, :public, :set, {:read_concurrency, true}])
-    {:ok, %{}}
-  end
+  def init(_), do: {:ok, %{}}
 
   @impl true
   def handle_cast({:joined, room_id}, state) do

@@ -5,7 +5,7 @@ defmodule KonetWeb.AdminController do
   def root(conn, _params) do
     json(conn, %{
       name: "Konet",
-      version: "0.1.0",
+      version: Konet.Version.current(),
       status: "running",
       studio: "/studio"
     })
@@ -16,7 +16,7 @@ defmodule KonetWeb.AdminController do
 
     json(conn, %{
       status: "ok",
-      version: "0.1.0",
+      version: Konet.Version.current(),
       connections: m.connections,
       uptime_seconds: DateTime.diff(DateTime.utc_now(), m.started_at, :second)
     })

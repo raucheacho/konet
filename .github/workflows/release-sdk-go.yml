@@ -28,12 +28,23 @@ jobs:
         working-directory: sdk/go
         run: go mod tidy && go build ./...
 
+      # A re-run must be safe, but a real failure (protected tags, missing
+      # permissions) must not leave the job green with nothing published — which
+      # `|| echo` did for both commands.
       - name: Create SDK tag
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           TAG="sdk/go/v${{ steps.version.outputs.VERSION }}"
-          git tag "$TAG" || echo "Tag $TAG already exists"
-          git push origin "$TAG" || echo "Tag $TAG already pushed"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG is already published — nothing to do."
+            exit 0
+          fi
+
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "Published $TAG"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

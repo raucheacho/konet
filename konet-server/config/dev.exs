@@ -12,8 +12,12 @@ config :konet, KonetWeb.Endpoint,
 
 # Env-configurable keys (studio_password, rate limits, history, webhooks)
 # are read at boot in runtime.exs so they don't require a recompile.
+#
+# jwt_secret is deliberately absent: runtime.exs takes KONET_SECRET_FILE, then
+# KONET_JWT_SECRET, then generates a random one for the run. It used to default
+# to the placeholder published in this repository, which a dev server reachable
+# from outside localhost would happily accept tokens against.
 config :konet,
-  jwt_secret: "change-me-in-production-min-32-chars!!",
   anon_key: nil,
   service_key: nil
 

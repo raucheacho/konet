@@ -17,12 +17,12 @@
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Syne', system-ui, sans-serif;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.6;
   font-size: 14px;
 }
 
-.mono { font-family: 'JetBrains Mono', monospace; }
+.mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; }
 .muted { color: var(--muted); }
 .accent { color: var(--accent); }
 .green { color: var(--accent2); }
@@ -64,7 +64,7 @@ body {
 
 .logo-badge {
   display: block;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 0.65rem;
   color: var(--muted);
   text-transform: uppercase;
@@ -208,7 +208,7 @@ body {
 
 .metric-label {
   font-size: 0.72rem;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -218,7 +218,7 @@ body {
 .metric-value {
   font-size: 2rem;
   font-weight: 700;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   letter-spacing: -1px;
 }
 
@@ -236,7 +236,7 @@ body {
 
 .info-label {
   font-size: 0.7rem;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -256,7 +256,7 @@ body {
 
 /* ── Badges ── */
 .badge {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 0.65rem;
   padding: 0.2rem 0.5rem;
   border-radius: 4px;
@@ -282,7 +282,7 @@ body {
   text-align: left;
   padding: 0.6rem 1rem;
   font-size: 0.7rem;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -363,7 +363,7 @@ body {
   min-height: 400px;
   max-height: 600px;
   overflow-y: auto;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 0.75rem;
 }
 
@@ -390,7 +390,7 @@ body {
 .form-label {
   display: block;
   font-size: 0.75rem;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -410,7 +410,7 @@ body {
 }
 
 .form-input:focus { border-color: var(--accent); }
-.form-input.mono { font-family: 'JetBrains Mono', monospace; }
+.form-input.mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; }
 
 textarea.form-input { resize: vertical; line-height: 1.6; }
 
@@ -458,7 +458,7 @@ textarea.form-input { resize: vertical; line-height: 1.6; }
   margin-top: 1rem;
   padding: 0.75rem 1rem;
   border-radius: 8px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 0.8rem;
 }
 
@@ -483,7 +483,7 @@ textarea.form-input { resize: vertical; line-height: 1.6; }
 
 .key-label {
   font-size: 0.75rem;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
