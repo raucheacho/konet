@@ -73,7 +73,7 @@ defmodule KonetWeb.Studio.OverviewLive do
         </div>
         <div class="info-row">
           <span class="muted">Version</span>
-          <span class="mono">v0.1.0</span>
+          <span class="mono">v<%= Konet.Version.current() %></span>
         </div>
       </div>
     </div>

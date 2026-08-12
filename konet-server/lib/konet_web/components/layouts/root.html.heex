@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
     <title>Konet Studio</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <%!-- No webfont link: it was the server's only outbound network
+          dependency, and an air-gapped or firewalled deployment blocked on a
+          request that could never finish. app.css falls back to the platform's
+          own UI and monospace faces. --%>
     <link rel="stylesheet" href={~p"/assets/app.css"} />
     <script defer src={~p"/assets/app.js"}></script>
   </head>
