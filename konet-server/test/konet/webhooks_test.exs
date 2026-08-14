@@ -26,6 +26,59 @@ defmodule Konet.WebhooksTest do
   # `fail_times` responses come back with `fail_status` before it starts
   # answering 200, which is how the retry path is driven.
 
+  # Le floor est la seule chose que Konet arbitre lui-même : ses événements
+  # doivent donc partir d'ici, et pas être reconstruits par un client — qui est
+  # une partie prenante, pas l'arbitre.
+
+  test "une prise et une libération émettent une paire" do
+    {:ok, "alice", since} = Konet.Floor.acquire("t:pair", "alice")
+
+    assert_receive {:webhook, _, _, taken}, 2000
+    assert taken =~ ~s("event":"floor_acquired")
+    assert taken =~ ~s("user_id":"alice")
+    assert taken =~ ~s("topic":"t:pair")
+
+    :ok = Konet.Floor.release("t:pair", "alice")
+
+    assert_receive {:webhook, _, _, freed}, 2000
+    assert freed =~ ~s("event":"floor_released")
+    assert freed =~ ~s("reason":"released")
+    assert freed =~ ~s("since":#{since})
+    assert freed =~ ~s("held_ms":)
+  end
+
+  # Un second appui rend le `since` d'origine : c'est la même prise de parole,
+  # et la compter deux fois ferait apparaître une transmission qui n'a pas eu
+  # lieu.
+  test "un appui répété n'émet pas une seconde prise" do
+    {:ok, "bob", since} = Konet.Floor.acquire("t:repeat", "bob")
+    assert_receive {:webhook, _, _, _first}, 2000
+
+    assert {:ok, "bob", ^since} = Konet.Floor.acquire("t:repeat", "bob")
+    refute_receive {:webhook, _, _, _}, 300
+
+    :ok = Konet.Floor.release("t:repeat", "bob")
+    assert_receive {:webhook, _, _, freed}, 2000
+    assert freed =~ ~s("event":"floor_released")
+  end
+
+  # Un détenteur qui se tait est balayé. Sans événement, le journal garderait
+  # une prise ouverte indéfiniment — le cas le plus trompeur de tous.
+  test "un balayage émet une libération expirée" do
+    Application.put_env(:konet, :floor_max_hold_ms, 0)
+    on_exit(fn -> Application.delete_env(:konet, :floor_max_hold_ms) end)
+
+    {:ok, "carol", _} = Konet.Floor.acquire("t:swept", "carol")
+    assert_receive {:webhook, _, _, _taken}, 2000
+
+    send(Konet.Floor, :sweep)
+
+    assert_receive {:webhook, _, _, freed}, 2000
+    assert freed =~ ~s("event":"floor_released")
+    assert freed =~ ~s("reason":"expired")
+    assert freed =~ ~s("user_id":"carol")
+  end
+
   defp start_listener(fail_times \\ 0, fail_status \\ 500) do
     test = self()
     {:ok, socket} = :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true])

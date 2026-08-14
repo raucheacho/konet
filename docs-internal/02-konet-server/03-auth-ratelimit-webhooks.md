@@ -136,6 +136,8 @@ Disabled unless `KONET_WEBHOOK_URL` is set. Four events:
 | `channel_vacated` | `ChannelRegistry.handle_cast({:left, …})` | last subscriber leaves |
 | `member_joined` | `RoomChannel.join/3` | every successful join |
 | `member_left` | `RoomChannel.terminate/2` | every channel teardown |
+| `floor_acquired` | `Floor.acquire/3` | the floor is genuinely taken |
+| `floor_released` | `Floor.release/2`, `:DOWN`, `:sweep` | the floor ends, whichever way |
 
 Body:
 
@@ -154,6 +156,35 @@ retried** — non-2xx and transport errors both produce a `Logger.warning` and
 nothing else.
 
 ⚠️ **Fragile — no ordering, no delivery guarantee, no retry.** Each event spawns
+### The floor pair
+
+`konet:floor` tells **clients** who holds a topic. These two tell the caller's
+**backend**, which is not a client and joins no channel. The distinction is the
+point: a record assembled by a connected client is assembled by a participant,
+whereas a webhook is signed by the arbiter.
+
+```json
+{"event": "floor_acquired", "data": {"topic": "room:x", "user_id": "alice", "at": 1765000000000}}
+{"event": "floor_released", "data": {"topic": "room:x", "user_id": "alice",
+                                     "at": 1765000009000, "since": 1765000000000,
+                                     "held_ms": 9000, "reason": "released"}}
+```
+
+`reason` is `released` (the holder gave it up), `disconnected` (the holding
+process died) or `expired` (`max_hold_ms` elapsed). All three are emitted, and
+that is deliberate: emitting only the first would leave acquisitions with no
+matching release in exactly the cases worth knowing about, and a reader cannot
+tell a missing event from a holder who never stopped.
+
+A repeated acquire by the current holder returns the *original* `since` and
+emits **nothing** — it is the same hold, and counting it twice would invent a
+transmission that never happened.
+
+`topic` is opaque. Konet does not parse it; whatever structure a caller encodes
+there is the caller's own.
+
+### Ordering
+
 its own task, so `member_joined` and `member_left` for the same user can arrive
 out of order. Receivers must be idempotent and must not treat webhook order as
 authoritative. There is also no timeout on the task itself, only a 5 s
@@ -163,6 +194,8 @@ authoritative. There is also no timeout on the task itself, only a 5 s
 flowchart LR
     J["RoomChannel.join/3"] --> WH1["Webhooks.emit(member_joined)"]
     T["RoomChannel.terminate/2"] --> WH2["Webhooks.emit(member_left)"]
+    FA["Floor.acquire/3"] --> WH3["Webhooks.emit(floor_acquired)"]
+    FR["Floor.release/2 · :DOWN · :sweep"] --> WH4["Webhooks.emit(floor_released)"]
     R1["ChannelRegistry :joined<br/>(count == 1)"] --> WH3["emit(channel_occupied)"]
     R2["ChannelRegistry :left<br/>(count <= 1)"] --> WH4["emit(channel_vacated)"]
 
