@@ -447,6 +447,55 @@ defmodule KonetWeb.RoomChannelTest do
     end
   end
 
+  describe "binary refusals" do
+    test "at most one reply per reason per second" do
+      # A client that keeps sending without the floor used to get one error
+      # reply per frame — fifty a second back for fifty a second sent.
+      socket = connect_with(%{"sub" => "mute"})
+      {:ok, _, socket} = subscribe_and_join(socket, "room:refusal-throttle")
+
+      refs = for n <- 1..5, do: push(socket, "a", {:binary, <<n>>})
+
+      [first | rest] = refs
+      assert_reply first, :error, %{reason: "floor_required"}
+      for ref <- rest, do: refute_reply(ref, :error, _, 50)
+
+      # A second later, the next refused frame is answered again.
+      Process.sleep(1_050)
+      ref = push(socket, "a", {:binary, <<6>>})
+      assert_reply ref, :error, %{reason: "floor_required"}
+    end
+
+    test "each reason has its own allowance" do
+      Application.put_env(:konet, :rate_limit_binary, 1)
+      on_exit(fn -> Application.delete_env(:konet, :rate_limit_binary) end)
+
+      socket = connect_with(%{"sub" => "talker"})
+      {:ok, _, socket} = subscribe_and_join(socket, "room:refusal-reasons")
+
+      # Without the floor: one floor_required.
+      ref = push(socket, "a", {:binary, <<0>>})
+      assert_reply ref, :error, %{reason: "floor_required"}
+
+      # With it, past the budget: rate_limited is still answered, once.
+      ref = push(socket, "konet:floor_acquire", %{})
+      assert_reply ref, :ok, _
+
+      refs = for n <- 1..4, do: push(socket, "a", {:binary, <<n>>})
+      replies = for ref <- refs, do: receive_reply(ref)
+
+      assert Enum.count(replies, &(&1 == "rate_limited")) == 1
+    end
+  end
+
+  defp receive_reply(ref) do
+    receive do
+      %Phoenix.Socket.Reply{ref: ^ref, status: :error, payload: %{reason: reason}} -> reason
+    after
+      100 -> nil
+    end
+  end
+
   describe "history replay" do
     test "late joiner receives buffered messages" do
       Application.put_env(:konet, :history_limit, 5)

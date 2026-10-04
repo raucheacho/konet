@@ -233,10 +233,10 @@ defmodule KonetWeb.RoomChannel do
           {:noreply, socket}
 
         {:error, :rate_limited} ->
-          {:reply, {:error, %{reason: "rate_limited"}}, socket}
+          refuse_binary(socket, "rate_limited")
       end
     else
-      {:reply, {:error, %{reason: "floor_required"}}, socket}
+      refuse_binary(socket, "floor_required")
     end
   end
 
@@ -252,6 +252,27 @@ defmodule KonetWeb.RoomChannel do
   end
 
   defp unsupported_reason(_payload), do: "unsupported_event"
+
+  # A refused frame gets a reply — the only way its sender can learn it was
+  # dropped — but at most one per reason per second. A client that keeps
+  # sending after losing the floor, or past its budget, would otherwise get
+  # fifty error replies a second back, doubling the traffic it is causing.
+  # The SDKs surface these replies as a `binary_error` event.
+  @refusal_interval_ms 1_000
+
+  defp refuse_binary(socket, reason) do
+    now = System.monotonic_time(:millisecond)
+    refused = Map.get(socket.assigns, :binary_refused_at, %{})
+
+    case refused do
+      %{^reason => last} when now - last < @refusal_interval_ms ->
+        {:noreply, socket}
+
+      _ ->
+        socket = assign(socket, :binary_refused_at, Map.put(refused, reason, now))
+        {:reply, {:error, %{reason: reason}}, socket}
+    end
+  end
 
   defp stamp(%{assigns: %{sender_prefix: nil}}, data), do: data
   defp stamp(%{assigns: %{sender_prefix: prefix}}, data), do: <<prefix::binary, data::binary>>

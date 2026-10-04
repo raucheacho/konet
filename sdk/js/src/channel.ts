@@ -29,6 +29,22 @@ export interface ChannelOptions {
  */
 type EventHandler = (payload: unknown, sender?: string) => void;
 
+/**
+ * Why the server refused binary frames, delivered as the channel's
+ * `"binary_error"` event — at most once per reason per second.
+ */
+export interface KonetBinaryError {
+  topic: string;
+  /** `"floor_required"` (exclusive topic, floor not held) or `"rate_limited"`. */
+  reason: string;
+}
+
+// Binary pushes carry refs with this prefix, so a refusal can be recognised
+// without remembering anything per frame.
+const BINARY_REF_PREFIX = "b";
+// Refusals of the same reason closer together than this are reported once.
+const BINARY_ERROR_INTERVAL_MS = 1_000;
+
 /** Why the server refused a `send()`. */
 export interface KonetSendError {
   topic: string;
@@ -82,6 +98,7 @@ export class Channel {
   private wantsJoin = false;
   private joinWaiters: JoinWaiter[] = [];
   private pendingSends: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private binaryErrorAt: Map<string, number> = new Map();
 
   constructor(
     topic: string,
@@ -204,10 +221,13 @@ export class Channel {
    * Different from `send()` in three ways that all follow from the rate:
    * Phoenix frames it natively instead of base64 inside JSON, the server never
    * acknowledges it, and in `"exclusive"` mode it is refused unless this
-   * client holds the channel's floor — take it with `acquireFloor()` first. In
-   * `"multiplex"` mode any member may send at any time, and receivers get each
-   * frame with its sender as the handler's second argument:
+   * client holds the channel's floor — take it with `acquireFloor()` first.
+   * In `"multiplex"` mode any member may send at any time, and receivers get
+   * each frame with its sender as the handler's second argument:
    * `channel.on("a", (data, sender) => …)`.
+   *
+   * A refused frame is reported as a `"binary_error"` event on the channel
+   * (`{ topic, reason }`), at most once per reason per second.
    *
    * `data` is copied into the frame, so the caller may reuse its buffer
    * immediately — which the audio path does, every 20 ms.
@@ -217,8 +237,15 @@ export class Channel {
       throw new Error(`Channel ${this.topic} is not joined`);
     }
     // Not tracked like send(): at fifty frames a second a reply tracker per
-    // frame would cost more than the frames do.
-    this.sendBinaryFn(this.joinRef!, this.nextRef(), this.topic, event, data);
+    // frame would cost more than the frames do. The ref's prefix is enough to
+    // recognise a refusal when one comes back; see "binary_error".
+    this.sendBinaryFn(
+      this.joinRef!,
+      BINARY_REF_PREFIX + this.nextRef(),
+      this.topic,
+      event,
+      data
+    );
   }
 
   /**
@@ -292,6 +319,9 @@ export class Channel {
         const list = this.handlers.get(`phx_reply:${msg.ref}`) ?? [];
         list.forEach((h) => h(resp));
         this.handlers.delete(`phx_reply:${msg.ref}`);
+        if (list.length === 0 && msg.ref?.startsWith(BINARY_REF_PREFIX)) {
+          this.binaryRefused(resp);
+        }
         break;
       }
 
@@ -374,6 +404,23 @@ export class Channel {
       event: "phx_join",
       payload: this.requestedBinaryMode ? { binary_mode: this.requestedBinaryMode } : {},
     });
+  }
+
+  /**
+   * A binary frame was refused. They used to vanish without a trace — lost
+   * audio, impossible to diagnose. The server already answers at most once per
+   * reason per second; the same window here keeps an older server, which
+   * answers every frame, from flooding the application.
+   */
+  private binaryRefused(resp: { status: string; response: unknown }): void {
+    if (resp.status === "ok") return;
+    const reason = (resp.response as { reason?: string } | null)?.reason ?? "unknown";
+    const now = Date.now();
+    const last = this.binaryErrorAt.get(reason);
+    if (last !== undefined && now - last < BINARY_ERROR_INTERVAL_MS) return;
+    this.binaryErrorAt.set(reason, now);
+    const error: KonetBinaryError = { topic: this.topic, reason };
+    this.emit("binary_error", error);
   }
 
   private trackSend(

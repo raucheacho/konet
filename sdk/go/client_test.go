@@ -653,3 +653,72 @@ func TestStatusReportsEachStepIncludingGivingUp(t *testing.T) {
 		t.Fatalf("after Disconnect twice: %v", got)
 	}
 }
+
+// ── Binary refusals ────────────────────────────────────────────────────────
+
+func refusal(ref, reason string) phxFrame {
+	return phxFrame{Ref: &ref, Topic: "room:t", Event: "phx_reply",
+		Payload: map[string]interface{}{"status": "error", "response": map[string]interface{}{"reason": reason}}}
+}
+
+func TestBinaryFramesCarryARecognisableRef(t *testing.T) {
+	var sentRef string
+	ch := newChannel("room:t", nil, func(_, ref, _, _ string, _ []byte) error {
+		sentRef = ref
+		return nil
+	}, func() string { return "7" })
+	ch.state = channelJoined
+
+	if err := ch.SendBinary("a", []byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	if sentRef != "b7" {
+		t.Fatalf("binary ref = %q, want b7", sentRef)
+	}
+}
+
+func TestBinaryRefusalsAreReportedOncePerReasonPerSecond(t *testing.T) {
+	ch := newChannel("room:t", nil, nil, func() string { return "1" })
+	got := make(chan BinaryError, 8)
+	ch.On("binary_error", func(p interface{}) { got <- p.(BinaryError) })
+
+	ch.receive(refusal("b1", "floor_required"))
+	ch.receive(refusal("b2", "floor_required")) // same second: folded
+	ch.receive(refusal("b3", "rate_limited"))   // another reason: reported
+	ch.receive(refusal("4", "whatever"))        // not a binary ref: ignored
+
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case e := <-got:
+			if e.Topic != "room:t" {
+				t.Errorf("topic = %q", e.Topic)
+			}
+			seen[e.Reason] = true
+		case <-time.After(time.Second):
+			t.Fatalf("only %v reported", seen)
+		}
+	}
+	if !seen["floor_required"] || !seen["rate_limited"] {
+		t.Fatalf("reported %v", seen)
+	}
+	select {
+	case e := <-got:
+		t.Fatalf("unexpected extra report %+v", e)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Once the second has passed, the same reason is reported again.
+	ch.mu.Lock()
+	ch.binaryErrorAt["floor_required"] = time.Now().Add(-2 * time.Second)
+	ch.mu.Unlock()
+	ch.receive(refusal("b5", "floor_required"))
+	select {
+	case e := <-got:
+		if e.Reason != "floor_required" {
+			t.Fatalf("got %+v", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("not reported after the window")
+	}
+}

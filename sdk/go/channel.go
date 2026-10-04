@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 )
 
 type channelState int
@@ -39,6 +41,22 @@ type ChannelOption func(*Channel)
 func WithBinaryMode(mode BinaryMode) ChannelOption {
 	return func(c *Channel) { c.requestedMode = mode }
 }
+
+// BinaryError is the payload of a channel's "binary_error" event: the server
+// refused binary frames, for Reason — "floor_required" (exclusive topic, floor
+// not held) or "rate_limited". Reported at most once per reason per second.
+// Register for it with On("binary_error", …).
+type BinaryError struct {
+	Topic  string
+	Reason string
+}
+
+// binaryRefPrefix marks the refs of binary pushes, so a refusal can be
+// recognised without remembering anything per frame.
+const binaryRefPrefix = "b"
+
+// binaryErrorInterval folds refusals of the same reason closer than this.
+const binaryErrorInterval = time.Second
 
 // ErrSocketClosed reports a request whose socket went away before the server
 // replied. Distinct from a refusal: nothing is known about whether the server
@@ -108,6 +126,8 @@ type Channel struct {
 	requestedMode BinaryMode
 	// confirmedMode is what the server said at the last successful join.
 	confirmedMode BinaryMode
+	// binaryErrorAt is when each refusal reason was last reported.
+	binaryErrorAt map[string]time.Time
 
 	sendFn       func(phxFrame) error
 	sendBinaryFn func(joinRef, ref, topic, event string, data []byte) error
@@ -131,6 +151,7 @@ func newChannel(
 		state:          channelIdle,
 		handlers:       make(map[string][]eventSub),
 		binaryHandlers: make(map[string][]binarySub),
+		binaryErrorAt:  make(map[string]time.Time),
 		replies:        make(map[string]chan interface{}),
 		sendFn:         sendFn,
 		sendBinaryFn:   sendBinaryFn,
@@ -320,7 +341,8 @@ func (c *Channel) Send(event string, payload interface{}) error {
 // and in BinaryExclusive mode it is refused unless this client holds the
 // channel's floor — take it with AcquireFloor first. In BinaryMultiplex mode
 // any member may send at any time, and receivers learn who sent each frame
-// through OnBinaryFrom.
+// through OnBinaryFrom. A refused frame is reported as a "binary_error" event
+// carrying a BinaryError, at most once per reason per second.
 //
 // data is copied into the frame, so the caller may reuse its buffer at once.
 func (c *Channel) SendBinary(event string, data []byte) error {
@@ -340,7 +362,8 @@ func (c *Channel) SendBinary(event string, data []byte) error {
 
 	// Not tracked like Send: at fifty frames a second, a reply channel per
 	// frame would cost more than the frames do.
-	return c.sendBinaryFn(joinRef, c.nextRef(), c.topic, event, data)
+	// The ref's prefix is enough to recognise a refusal; see "binary_error".
+	return c.sendBinaryFn(joinRef, binaryRefPrefix+c.nextRef(), c.topic, event, data)
 }
 
 // OnBinary registers a handler for binary frames on this event. Returns a
@@ -555,6 +578,8 @@ func (c *Channel) receive(frame phxFrame) {
 		c.mu.Unlock()
 		if ch != nil {
 			ch <- frame.Payload
+		} else if strings.HasPrefix(ref, binaryRefPrefix) {
+			c.binaryRefused(frame.Payload)
 		}
 
 	default:
@@ -570,6 +595,42 @@ func (c *Channel) receive(frame phxFrame) {
 		for _, sub := range subs {
 			go sub.fn(frame.Payload)
 		}
+	}
+}
+
+// binaryRefused reports a refused binary frame as a "binary_error" event. They
+// used to vanish without a trace — lost audio, impossible to diagnose. The
+// server already answers at most once per reason per second; the same window
+// here keeps an older server, which answers every frame, from flooding the
+// application.
+func (c *Channel) binaryRefused(payload interface{}) {
+	var reply struct {
+		Status   string `json:"status"`
+		Response struct {
+			Reason string `json:"reason"`
+		} `json:"response"`
+	}
+	if err := MarshalPayload(payload, &reply); err != nil || reply.Status == "ok" {
+		return
+	}
+	reason := reply.Response.Reason
+	if reason == "" {
+		reason = "unknown"
+	}
+
+	now := time.Now()
+	c.mu.Lock()
+	if last, ok := c.binaryErrorAt[reason]; ok && now.Sub(last) < binaryErrorInterval {
+		c.mu.Unlock()
+		return
+	}
+	c.binaryErrorAt[reason] = now
+	subs := append([]eventSub{}, c.handlers["binary_error"]...)
+	c.mu.Unlock()
+
+	event := BinaryError{Topic: c.topic, Reason: reason}
+	for _, sub := range subs {
+		go sub.fn(event)
 	}
 }
 

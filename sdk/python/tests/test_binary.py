@@ -140,3 +140,44 @@ def test_exclusive_frames_are_left_untouched():
 
     # The leading 5 is data here, not a length: exclusive frames have no prefix.
     assert heard == [(bytes([5, 1, 2]), "")]
+
+
+def _refusal(ref, reason):
+    return [None, ref, "room:t", "phx_reply", {"status": "error", "response": {"reason": reason}}]
+
+
+def test_binary_frames_carry_a_recognisable_ref():
+    import asyncio
+    from konet.channel import Channel
+
+    sent = []
+
+    async def send_binary(join_ref, ref, topic, event, data):
+        sent.append(ref)
+
+    channel = Channel("room:t", None, send_binary, lambda: "7")
+    channel._state = "joined"
+    asyncio.run(channel.send_binary("a", b"x"))
+    assert sent == ["b7"]
+
+
+def test_binary_refusals_are_reported_once_per_reason_per_second():
+    from konet.channel import Channel
+
+    channel = Channel("room:t", None, None, lambda: "1")
+    errors = []
+    channel.on("binary_error", errors.append)
+
+    channel._receive(_refusal("b1", "floor_required"))
+    channel._receive(_refusal("b2", "floor_required"))  # same second: folded
+    channel._receive(_refusal("b3", "rate_limited"))  # another reason
+    channel._receive(_refusal("4", "whatever"))  # not a binary ref: ignored
+
+    assert errors == [
+        {"topic": "room:t", "reason": "floor_required"},
+        {"topic": "room:t", "reason": "rate_limited"},
+    ]
+
+    channel._binary_error_at["floor_required"] -= 2.0  # the second has passed
+    channel._receive(_refusal("b5", "floor_required"))
+    assert len(errors) == 3

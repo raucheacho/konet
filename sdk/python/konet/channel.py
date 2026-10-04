@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import defaultdict
 from typing import Any, Callable, Awaitable, Literal
 
@@ -12,6 +13,12 @@ EventHandler = Callable[[Any], Awaitable[None] | None]
 #: sends whenever it likes, with no floor at all — a call.
 BinaryMode = Literal["exclusive", "multiplex"]
 _BINARY_MODES = ("exclusive", "multiplex")
+
+# Binary pushes carry refs with this prefix, so a refusal can be recognised
+# without remembering anything per frame.
+_BINARY_REF_PREFIX = "b"
+# Refusals of the same reason closer together than this are reported once.
+_BINARY_ERROR_INTERVAL = 1.0
 #: Handles an incoming binary frame.
 BinaryHandler = Callable[[bytes], Awaitable[None] | None]
 #: Handles an incoming binary frame and who sent it: the member's user id,
@@ -55,6 +62,8 @@ class Channel:
         # unsubscribe(), so a channel the caller deliberately left is never
         # silently re-joined.
         self._wants_join = False
+        # When each binary refusal reason was last reported (monotonic seconds).
+        self._binary_error_at: dict[str, float] = {}
 
     @property
     def binary_mode(self) -> BinaryMode | None:
@@ -158,14 +167,19 @@ class Channel:
         this client holds the channel's floor — take it with
         :meth:`acquire_floor` first. In ``"multiplex"`` mode any member may send
         at any time, and receivers learn who sent each frame through
-        :meth:`on_binary_from`.
+        :meth:`on_binary_from`. A refused frame is reported as a
+        ``"binary_error"`` event (``{"topic", "reason"}``), at most once per
+        reason per second.
         """
         if self._state != "joined":
             raise RuntimeError(f"Channel {self.topic} is not joined")
 
         # Not tracked like send(): at fifty frames a second, a future per frame
-        # would cost more than the frames do.
-        await self._send_binary_fn(self._join_ref, self._next_ref(), self.topic, event, data)
+        # would cost more than the frames do. The ref's prefix is enough to
+        # recognise a refusal; see the "binary_error" event.
+        await self._send_binary_fn(
+            self._join_ref, _BINARY_REF_PREFIX + self._next_ref(), self.topic, event, data
+        )
 
     def on_binary(self, event: str, handler: BinaryHandler) -> Callable[[], None]:
         """Register a handler for binary frames. Returns an unsubscribe callable."""
@@ -288,6 +302,32 @@ class Channel:
             if asyncio.iscoroutine(result):
                 asyncio.create_task(result)
 
+    def _binary_refused(self, payload: Any) -> None:
+        """Report a refused binary frame as a ``"binary_error"`` event.
+
+        They used to vanish without a trace — lost audio, impossible to
+        diagnose. The server already answers at most once per reason per
+        second; the same window here keeps an older server, which answers every
+        frame, from flooding the application. Handlers receive
+        ``{"topic": ..., "reason": ...}``.
+        """
+        if not isinstance(payload, dict) or payload.get("status") == "ok":
+            return
+        response = payload.get("response")
+        reason = (response.get("reason") if isinstance(response, dict) else None) or "unknown"
+
+        now = time.monotonic()
+        last = self._binary_error_at.get(reason)
+        if last is not None and now - last < _BINARY_ERROR_INTERVAL:
+            return
+        self._binary_error_at[reason] = now
+
+        error = {"topic": self.topic, "reason": reason}
+        for handler in list(self._handlers.get("binary_error", [])):
+            result = handler(error)
+            if asyncio.iscoroutine(result):
+                asyncio.create_task(result)
+
     def _receive(self, frame: list) -> None:
         """Called by the client when a message arrives for this topic."""
         _join_ref, ref, _topic, event, payload = frame
@@ -296,6 +336,8 @@ class Channel:
             fut = self._reply_futures.pop(ref, None)
             if fut and not fut.done():
                 fut.set_result(payload if isinstance(payload, dict) else {})
+            elif fut is None and isinstance(ref, str) and ref.startswith(_BINARY_REF_PREFIX):
+                self._binary_refused(payload)
             return
 
         if event == "phx_error":

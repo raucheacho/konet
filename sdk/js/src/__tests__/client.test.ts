@@ -513,3 +513,43 @@ describe("connection status", () => {
     client.disconnect();
   });
 });
+
+describe("binary refusals", () => {
+  // Binary pushes carry no tracked ref, so a refusal used to be dropped
+  // silently: lost audio with no way to know why.
+  it("sends binary frames with a recognisable ref", async () => {
+    const { client, socket, channel } = await connectAndJoin();
+    channel.sendBinary("a", new Uint8Array([1]));
+
+    const bytes = new Uint8Array(socket.sentBinary[0]!);
+    const ref = new TextDecoder().decode(bytes.subarray(5 + bytes[1]!, 5 + bytes[1]! + bytes[2]!));
+    expect(ref.startsWith("b")).toBe(true);
+    client.disconnect();
+  });
+
+  it("reports a refusal as binary_error, once per reason per second", async () => {
+    const { client, socket, channel } = await connectAndJoin();
+    const errors: unknown[] = [];
+    channel.on("binary_error", (e) => errors.push(e));
+
+    const refuse = (ref: string, reason: string) =>
+      socket.serverSend([null, ref, TOPIC, "phx_reply", { status: "error", response: { reason } }]);
+
+    refuse("b10", "floor_required");
+    refuse("b11", "floor_required"); // same second: folded into the first
+    refuse("b12", "rate_limited"); // another reason: reported
+    expect(errors).toEqual([
+      { topic: TOPIC, reason: "floor_required" },
+      { topic: TOPIC, reason: "rate_limited" },
+    ]);
+
+    vi.advanceTimersByTime(1_000);
+    refuse("b13", "floor_required");
+    expect(errors).toHaveLength(3);
+
+    // A late reply to a text send is not a binary refusal.
+    socket.serverSend([null, "14", TOPIC, "phx_reply", { status: "error", response: { reason: "x" } }]);
+    expect(errors).toHaveLength(3);
+    client.disconnect();
+  });
+});
