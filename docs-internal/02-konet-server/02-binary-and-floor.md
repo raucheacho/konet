@@ -40,6 +40,14 @@ never being refused; they cannot share a topic. So:
   prunes dead pids itself, because a `:DOWN` may still be queued behind it;
 - on restart, monitors are rebuilt from the table (same pattern as `Floor`).
 
+**Member ceiling (multiplex only).** `claim/3` refuses a multiplex joiner once
+the topic holds `KONET_MULTIPLEX_MAX_MEMBERS` live members (default 16, `0` =
+none) with `{:error, {:full, max}}`, which `RoomChannel` turns into
+`{reason: "topic_full", max_members: max}`. Checked in the same serialized step
+as the mode, so it costs the hot path nothing. It counts members, not active
+senders: knowing who is "active" would mean tracking every frame. Exclusive
+topics have no ceiling — the floor already bounds them to one sender.
+
 An absent `binary_mode` means `exclusive`, so every existing client — and every
 text-only client — joins exactly as before. The flip side: **every member of a
 multiplex topic must ask for multiplex**, including a text-only observer.
@@ -211,8 +219,22 @@ separate from `{:msg, …}`. Rationale, from `rate_limiter.ex`:
 > one client flooding. In an :exclusive topic the floor also bounds the topic to
 > one sender; in a :multiplex topic nothing does, by design.
 
-In multiplex, *n* senders fan out *n × (n − 1)* streams; nothing bounds that
-per topic today.
+In multiplex, *n* senders fan out *n × (n − 1)* streams; the member ceiling
+above is what bounds it.
+
+### Refusals: one reply per reason per second
+
+A refused frame (`floor_required`, `rate_limited`) is answered through
+`refuse_binary/2`, which keeps the last reply time per reason in
+`socket.assigns.binary_refused_at` and answers at most once per reason per
+second. It used to answer every refused frame — fifty error replies a second for
+a client that kept sending after losing the floor.
+
+The reply is a JSON `phx_reply` to the frame's ref. The SDKs give every binary
+push a ref starting with `b` (`b42`) and track none of them; a `phx_reply` with
+no waiter and a `b` ref is a binary refusal, surfaced as a channel
+`binary_error` event `{topic, reason}` — deduplicated per reason per second on
+the client too, for servers older than the throttle.
 
 Default `KONET_RATE_LIMIT_BINARY=120`.
 

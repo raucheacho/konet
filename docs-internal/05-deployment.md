@@ -102,6 +102,7 @@ Environment block, grouped by role:
 | `KONET_CONN_RATE_LIMIT` | `${…:-200}` | connections/min per IP |
 | `KONET_RATE_LIMIT_BINARY` | `${…:-120}` | binary frames/s per socket |
 | `KONET_FLOOR_MAX_HOLD_MS` | `${…:-30000}` | how long one member may hold the floor |
+| `KONET_MULTIPLEX_MAX_MEMBERS` | `${…:-16}` | members of one multiplex topic; `0` = no ceiling |
 | `KONET_TRUST_PROXY_HEADERS` | `${…:-false}` | **set this behind Coolify/Dokploy/Traefik/Nginx** — see below |
 | `KONET_HISTORY_LIMIT` | `${…:-0}` | replay off by default |
 | `KONET_HISTORY_TTL` | `${…:-900}` | seconds a room's buffer outlives its last message |

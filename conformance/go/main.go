@@ -179,9 +179,15 @@ func main() {
 	binAMu.Unlock()
 	check(10, "binary does not echo to sender", !echoed, "sender received its own audio")
 
-	// 11 — a client without the floor is refused, and the channel survives it
+	// 11/21 — a client without the floor is refused, is told so, and the
+	// channel survives it
+	refused := newWaiter()
+	chB.On("binary_error", func(p any) { refused.deliver(p) })
 	_ = chB.SendBinary("audio", payload)
-	time.Sleep(300 * time.Millisecond)
+	gotRefusal, _ := refused.wait(2 * time.Second)
+	refusal, _ := gotRefusal.(konet.BinaryError)
+	check(21, "a refused binary frame is reported",
+		refusal.Reason == "floor_required" && refusal.Topic == room, fmt.Sprintf("%+v", gotRefusal))
 
 	survive := newWaiter()
 	chB.On("conf:after-refusal", func(p any) { survive.deliver(p) })
@@ -331,6 +337,17 @@ func multiplex(ctx context.Context, url, token string, a, b *konet.Client, call 
 	err = walkie.Channel(call).Subscribe(joinCtx)
 	check(19, "a joiner in the other mode is refused",
 		err != nil && contains(err.Error(), "binary_mode_mismatch"), fmt.Sprint(err))
+
+	// 22 — the multiplex topic is full at the server's ceiling (2 in this run)
+	third := konet.New(url, token, opts)
+	if err := third.Connect(ctx); err != nil {
+		fail(22, "a multiplex topic has a member ceiling", err.Error())
+		return
+	}
+	defer third.Disconnect()
+	err = third.Channel(call, konet.WithBinaryMode(konet.BinaryMultiplex)).Subscribe(joinCtx)
+	check(22, "a multiplex topic has a member ceiling",
+		err != nil && contains(err.Error(), "topic_full"), fmt.Sprint(err))
 }
 
 func finish() {

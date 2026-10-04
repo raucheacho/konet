@@ -142,25 +142,21 @@ async function main() {
   offA();
   check(10, "binary does not echo to sender", binOnA === false, "sender received its own audio");
 
-  // 11 — a client without the floor is refused
-  const refusal = new Promise((resolve) => {
-    const off = chB.on("send_error", (e) => {
-      off();
-      resolve(e);
-    });
-    setTimeout(() => resolve(null), 2000);
-  });
+  // 11/21 — a client without the floor is refused, is told so, and the
+  // channel survives it
+  const refusal = next(chB, "binary_error", 2000);
   chB.sendBinary("audio", bytes);
   const refused = await refusal;
-  // The server replies with a JSON phx_reply {reason: "floor_required"}, but
-  // sendBinary() tracks no ref, so the SDK drops it rather than routing it to
-  // send_error; absence of delivery to A is the observable part.
   check(
-    11,
-    "binary without the floor is refused",
-    refused === null || /floor_required/.test(JSON.stringify(refused)),
+    21,
+    "a refused binary frame is reported",
+    refused?.reason === "floor_required" && refused?.topic === ROOM,
     JSON.stringify(refused)
   );
+
+  const surviving11 = next(chB, "conf:after-refusal", 3000);
+  chA.send("conf:after-refusal", { ok: true });
+  check(11, "channel survives a refused binary frame", (await surviving11)?.ok === true, "no traffic after the refusal");
 
   // 12 — release, then B can take it
   try {
@@ -288,6 +284,16 @@ async function main() {
     check(19, "a joiner in the other mode is refused", /binary_mode_mismatch/.test(err.message), err.message);
   }
   walkie.disconnect();
+
+  // 22 — the multiplex topic is full at the server's ceiling (2 in this run)
+  const third = createClient(URL, { token: TOKEN });
+  try {
+    await third.channel(CALL, { binaryMode: "multiplex" }).subscribe();
+    fail(22, "a multiplex topic has a member ceiling", "the third member was accepted");
+  } catch (err) {
+    check(22, "a multiplex topic has a member ceiling", /topic_full/.test(err.message), err.message);
+  }
+  third.disconnect();
 
   a.disconnect();
   b.disconnect();

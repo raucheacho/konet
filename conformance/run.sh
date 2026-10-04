@@ -95,6 +95,7 @@ info "Starting konet-server on :$PORT"
     KONET_RATE_LIMIT=500 \
     KONET_CONN_RATE_LIMIT=1000 \
     KONET_RATE_LIMIT_BINARY=500 \
+    KONET_MULTIPLEX_MAX_MEMBERS=2 \
     MIX_ENV=dev \
     mix phx.server >"$SERVER_LOG" 2>&1
 ) &

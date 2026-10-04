@@ -36,6 +36,8 @@ contract, not about one client's internals:
 | 18 | A asks for the floor on the multiplex topic | `{reason: "floor_disabled"}` — the floor does not exist there |
 | 19 | a third socket joins it without a mode | `{reason: "binary_mode_mismatch", binary_mode: "multiplex"}` |
 | 20 | each multiplex frame names its sender | the server's `sender_size \| sender \| data` prefix, split off by the SDK |
+| 21 | B's refused binary frame is reported to B | the reply to a `b…` ref surfaces as `binary_error {topic, reason: "floor_required"}` |
+| 22 | a third socket joins the multiplex topic | `{reason: "topic_full"}` — `run.sh` sets `KONET_MULTIPLEX_MAX_MEMBERS=2` |
 
 Steps 13 and 15 were covered by no test in any language.
 

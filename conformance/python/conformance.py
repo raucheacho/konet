@@ -162,9 +162,14 @@ async def main() -> None:
         echoed = await bin_a.wait(timeout=0.6)
         check(10, "binary does not echo to sender", echoed is None, "sender received its own audio")
 
-        # 11 — a client without the floor is refused; the channel survives it
+        # 11/21 — a client without the floor is refused, is told so, and the
+        # channel survives it
+        refused = watch(ch_b, "binary_error")
         await ch_b.send_binary("audio", payload)
-        await asyncio.sleep(0.3)
+        refusal = await refused.wait(timeout=2.0)
+        check(21, "a refused binary frame is reported",
+              isinstance(refusal, dict) and refusal.get("reason") == "floor_required"
+              and refusal.get("topic") == ROOM, str(refusal))
 
         survive = watch(ch_b, "conf:after-refusal")
         await ch_a.send("conf:after-refusal", {"ok": True})
@@ -287,6 +292,17 @@ async def multiplex(a: KonetClient, b: KonetClient, call: str) -> None:
         check(19, "a joiner in the other mode is refused", "binary_mode_mismatch" in str(exc), str(exc))
     finally:
         await walkie.disconnect()
+
+    # 22 — the multiplex topic is full at the server's ceiling (2 in this run)
+    third = KonetClient(URL, token=TOKEN, max_reconnect_tries=3)
+    await third.connect()
+    try:
+        await third.channel(call, binary_mode="multiplex").subscribe()
+        _fail(22, "a multiplex topic has a member ceiling", "the third member was accepted")
+    except Exception as exc:
+        check(22, "a multiplex topic has a member ceiling", "topic_full" in str(exc), str(exc))
+    finally:
+        await third.disconnect()
 
 
 if __name__ == "__main__":

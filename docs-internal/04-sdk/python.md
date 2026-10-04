@@ -168,3 +168,10 @@ because `[build-system]` has no such key.
 `konet/__init__.py`'s `__version__` is rewritten by the same step, so
 `konet.__version__` matches the wheel. It used to be left at `0.1.0` on every
 published release.
+
+## Binary refusals
+
+`send_binary` sends refs prefixed `b`. In `_receive`, a `phx_reply` with no
+pending future and a `b` ref goes to `_binary_refused`, which calls the
+`"binary_error"` handlers with `{"topic", "reason"}` — at most once per reason
+per second (`_binary_error_at`, monotonic clock).

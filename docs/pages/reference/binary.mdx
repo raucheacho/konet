@@ -36,6 +36,17 @@ Every member of a multiplex topic — including one that only sends text — mus
 therefore join with `binaryMode: 'multiplex'`. The mode is forgotten once the
 last member leaves.
 
+**A multiplex topic has a member ceiling**, `KONET_MULTIPLEX_MAX_MEMBERS`
+(default 16). Every member may send, and with *n* senders the server relays
+*n × (n − 1)* streams — on a single node, one oversized topic would slow every
+other. A joiner beyond the ceiling is refused:
+
+```json
+{ "status": "error", "response": { "reason": "topic_full", "max_members": 16 } }
+```
+
+Exclusive topics have no ceiling: the floor already allows one sender at a time.
+
 The join reply confirms the mode, readable as `channel.binaryMode` once joined.
 A server older than modes confirms nothing; the SDKs read that as `exclusive`,
 which is all it ever did.
@@ -146,7 +157,19 @@ are relayed untouched: the floor holder is the sender.
 at speaker volume.
 
 **Frames are not acknowledged.** At a media rate a reply per frame would cost
-more than the frames do. Only a refusal comes back.
+more than the frames do. Only a refusal comes back — at most one per reason
+(`floor_required`, `rate_limited`) per second per socket, so a client that keeps
+sending after losing the floor is not answered fifty times a second. The SDKs
+report it as a `binary_error` event on the channel:
+
+```js
+channel.on('binary_error', ({ topic, reason }) => {
+  // reason: 'floor_required' | 'rate_limited' — at most once per reason per second
+})
+```
+
+The SDKs recognise these replies by the `b` prefix they give every binary
+frame's ref, so nothing is remembered per frame.
 
 **Frames are not recorded in history.** Buffering 50 frames a second would blow
 up the replay buffer for a replay nobody can use. Recording media is a durable
@@ -166,8 +189,8 @@ sharing the message budget would have a talker starve their own position
 updates.
 
 The limit is per socket: it stops one client flooding. In `exclusive` mode the
-floor also bounds a topic to one sender; in `multiplex` mode nothing does, so
-a topic with *n* senders fans out *n × (n − 1)* streams.
+floor also bounds a topic to one sender; in `multiplex` mode
+`KONET_MULTIPLEX_MAX_MEMBERS` bounds how many senders a topic can have.
 
 ## Performance
 
@@ -218,6 +241,7 @@ server adds it. `exclusive` frames have no prefix.
 |----------|---------|---------|
 | `KONET_RATE_LIMIT_BINARY` | `120` | Binary frames per second, per socket |
 | `KONET_FLOOR_MAX_HOLD_MS` | `30000` | Before a stuck holder is swept |
+| `KONET_MULTIPLEX_MAX_MEMBERS` | `16` | Members of one multiplex topic (`0`: no ceiling) |
 
 ## Support by SDK
 

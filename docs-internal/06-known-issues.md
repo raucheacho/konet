@@ -116,26 +116,14 @@ keys `konet keys generate` and `rotate!/0` mint are perpetual, and the only
 revocation is a global rotation that cuts every client at once. A backend
 minting per-user tokens can and should set `exp` itself.
 
-### 10. A multiplex topic has no per-topic sending bound — **open**
+### 10. The 8.6 MB `conformance/go/go` binary in published history — **open until force-pushed**
 
-The binary budget is per socket. In `exclusive` mode the floor also bounds a
-topic to one sender; in `multiplex` nothing does, and *n* senders fan out
-*n × (n − 1)* streams.
+It is untracked, ignored, and has been removed from every local branch and tag
+with `git filter-repo`. Until `main`, `develop` and the tags are force-pushed
+the remote still carries it; after that, GitHub keeps it reachable through old
+SHAs and the `refs/pull/*` of PRs #6 and #7 until GitHub support purges them.
 
-### 11. A refused binary frame is never surfaced by the SDKs — **open**
-
-The server replies `{reason: "floor_required"}` (or `rate_limited`) as a JSON
-`phx_reply`, but `sendBinary` tracks no ref — deliberately, at fifty frames a
-second — so every SDK drops it. Since `konet:floor {holder: nil}` is now
-announced on every release, a holder learns its floor is gone; a client
-sending without ever having held it still learns nothing.
-
-### 12. The 8.6 MB `conformance/go/go` binary is still in git history — **open**
-
-It is no longer tracked and is ignored, but removing it from history means
-rewriting published commits, which is the maintainer's call.
-
-### 13. Releases carry provenance, not signatures — **mitigated**
+### 11. Releases carry provenance, not signatures — **mitigated**
 
 The CLI release workflow attests build provenance (`gh attestation verify
 <archive> --repo raucheacho/konet`), and `install.sh` refuses unverifiable
@@ -246,19 +234,21 @@ that test *is* the guard.
 | **No format checks in CI.** | `.formatter.exs` + `mix format --check-formatted`; `gofmt -l` for the CLI and Go SDK | CI |
 | **CLI interpolated the channel into `/api/presence/%s` unescaped.** | `url.PathEscape` | `internal/api/client_test.go` |
 | **A refused join ran `terminate/2` as a leave**: a `leave` log, a `member_left` webhook with `room: nil`, a registry decrement on `"unknown"`. | `terminate/2` returns at once when no `room_id` was assigned | `room_channel_test.exs` `"a refused join is not reported as a leave"` |
+| **A multiplex topic had no bound**: every member may send, so *n* members cost *n × (n − 1)* streams on a single node. | `KONET_MULTIPLEX_MAX_MEMBERS` (default 16) checked in `BinaryMode.claim`; beyond it a join gets `topic_full` | `binary_mode_test.exs` `describe "multiplex member ceiling"`, `room_channel_test.exs` `"a member beyond the ceiling is refused and told it"`, conformance step 22 |
+| **A refused binary frame vanished**: the server's `floor_required`/`rate_limited` reply was dropped by every SDK, since binary refs are untracked. | SDKs prefix binary refs with `b` and turn a waiter-less reply to one into a `binary_error` event `{topic, reason}`, once per reason per second; the server answers at most once per reason per second per socket instead of every frame | `room_channel_test.exs` `describe "binary refusals"`, JS `describe("binary refusals")`, Go `TestBinaryRefusalsAreReportedOncePerReasonPerSecond`, Python `test_binary_refusals_are_reported_once_per_reason_per_second`, conformance step 21 |
 | **No build provenance on releases.** | `actions/attest-build-provenance` on the CLI archives and checksums | — (runs on tag) |
 
 ## Test counts, before and after
 
 | Suite | Before | After | Now (binary modes, sender prefix, audit fixes) |
 |---|---|---|---|
-| `konet-server` | 31 | 76 | 108 |
-| `sdk/go` | 8 (binary framing only) | 16 | 26 |
-| `sdk/python` | 12 (binary framing only) | 19 | 29 |
-| `sdk/js` | 26 | 26 | 42 |
+| `konet-server` | 31 | 76 | 115 |
+| `sdk/go` | 8 (binary framing only) | 16 | 28 |
+| `sdk/python` | 12 (binary framing only) | 19 | 31 |
+| `sdk/js` | 26 | 26 | 44 |
 | `sdk/react-native` | 7 | 7 | 7 |
 | `konet-cli` | 3 (config only) | 8 | 18 |
-| **conformance** (3 SDKs, real server) | **0** | **45** (× 15 steps) | **60** (× 20 steps) |
+| **conformance** (3 SDKs, real server) | **0** | **45** (× 15 steps) | **66** (× 22 steps) |
 
 CI additionally runs the Go SDK suite under `-race`, the Python suite at all,
 and the conformance harness — none of which it did before.

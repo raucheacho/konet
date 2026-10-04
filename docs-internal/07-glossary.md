@@ -35,6 +35,11 @@ frame's data as `sender_size | sender | payload`, `sender` being the token's
 `sub`. Lets receivers separate concurrent streams; cannot be forged by a client.
 → `RoomChannel.sender_prefix/2`, `stamp/2`; `sdk/*/binary.*` (`splitSender`)
 
+**binary_error** — The channel event every SDK emits when the server refused
+binary frames, `{topic, reason}` with `floor_required` or `rate_limited`. At most
+once per reason per second (the server throttles its replies the same way).
+Recognised by the `b` prefix of binary refs.
+
 **binary_mode_mismatch** — The join refusal when a client asks for the other
 mode than the members already on the topic. Carries the mode in force:
 `{reason: "binary_mode_mismatch", binary_mode: "multiplex"}`.
@@ -83,7 +88,11 @@ someone else holds the floor. The reply names them: `{reason: "floor_held",
 holder: "alice"}`, so a UI can say *who* is talking.
 
 **floor_required** — The refusal reason returned for a binary frame sent without
-holding the floor.
+holding the floor (exclusive topics). At most one such reply per second per
+socket; surfaced by the SDKs as `binary_error`.
+
+**topic_full** — The join refusal for a multiplex topic already at
+`KONET_MULTIPLEX_MAX_MEMBERS`; carries `max_members`.
 
 **`konet:floor`** — The server broadcast announcing a floor change, payload
 `{holder: user_id | nil, since: ms}`. Sent to **everyone including the new

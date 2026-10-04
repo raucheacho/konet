@@ -201,6 +201,7 @@ effect there.
 | `KONET_CONN_RATE_LIMIT` | no | `200` | prod + dev | New connections per minute per IP. |
 | `KONET_RATE_LIMIT_BINARY` | no | `120` | prod + dev | Binary frames per second per socket (50 fps for 20 ms Opus plus headroom). |
 | `KONET_FLOOR_MAX_HOLD_MS` | no | `30000` | prod + dev | How long a floor may be held before `Konet.Floor` sweeps it. |
+| `KONET_MULTIPLEX_MAX_MEMBERS` | no | `16` | prod + dev | Members of one multiplex topic; beyond it a join gets `topic_full`. `0` = no ceiling. |
 | `KONET_HISTORY_LIMIT` | no | `0` (disabled) | prod + dev | Broadcasts buffered per room for late joiners. |
 | `KONET_HISTORY_TTL` | no | `900` | prod + dev | Seconds a room's buffer outlives its last message. Bounds the table for many short-lived rooms. |
 | `KONET_TRUST_PROXY_HEADERS` | no | `false` | prod + dev | Read the client IP from `X-Forwarded-For`. **Set it only when a proxy really is in front** — see below. |

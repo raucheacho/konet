@@ -122,6 +122,10 @@ of it. Without the random half, every client dropped by a server restart came
 back in lockstep. Up to `maxReconnectAttempts` (default 10); after that the
 client gives up until `checkConnection()` revives it.
 
+Binary pushes use refs prefixed `b`. A `phx_reply` arriving with no waiter and
+such a ref is a refusal: `Channel.binaryRefused` emits `"binary_error"`
+`{topic, reason}`, at most once per reason per second (`binaryErrorAt`).
+
 `client.onStatus(handler)` reports each step — `connecting`, `connected`,
 `reconnecting` (with `attempt` and `delayMs`), `disconnected` (explicit
 `disconnect()`), `failed` (attempts used up). Giving up used to be silent. A

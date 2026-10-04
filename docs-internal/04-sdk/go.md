@@ -223,3 +223,10 @@ green with nothing published.
 Note the module declares `go 1.23` while the CLI declares `go 1.25.0` — a lower
 floor for the SDK is correct, since library consumers should not be forced onto
 the newest toolchain.
+
+## Binary refusals
+
+`SendBinary` sends refs prefixed `b`. In `receive`, a `phx_reply` with no waiter
+in `replies` and a `b` ref goes to `binaryRefused`, which emits `"binary_error"`
+to `On` handlers with a `BinaryError{Topic, Reason}` payload — at most once per
+reason per second (`binaryErrorAt`, under `Channel.mu`).
