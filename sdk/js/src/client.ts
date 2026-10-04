@@ -1,4 +1,4 @@
-import { Channel } from "./channel.js";
+import { Channel, ChannelOptions } from "./channel.js";
 import { BROADCAST, decodeServerFrame, encodePush, PUSH } from "./binary.js";
 
 export interface KonetClientOptions {
@@ -67,9 +67,20 @@ export class KonetClient {
     this.state = "disconnected";
   }
 
-  channel(topic: string): Channel {
-    if (this.channels.has(topic)) {
-      return this.channels.get(topic)!;
+  /**
+   * The channel for `topic`, created on first use. `options` only apply then:
+   * a second call returns the same channel, and throws if it asks for a
+   * different binary mode rather than silently ignoring it.
+   */
+  channel(topic: string, options: ChannelOptions = {}): Channel {
+    const existing = this.channels.get(topic);
+    if (existing) {
+      if (options.binaryMode && options.binaryMode !== (existing.requestedMode ?? "exclusive")) {
+        throw new Error(
+          `${topic} already exists in ${existing.requestedMode ?? "exclusive"} mode`
+        );
+      }
+      return existing;
     }
 
     const ch = new Channel(
@@ -79,7 +90,8 @@ export class KonetClient {
       (joinRef, ref, chanTopic, event, data) =>
         this.sendBinary(joinRef, ref, chanTopic, event, data),
       () => String(++this.refCounter),
-      () => this.ws?.readyState === WebSocket.OPEN
+      () => this.ws?.readyState === WebSocket.OPEN,
+      options
     );
 
     this.channels.set(topic, ch);

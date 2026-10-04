@@ -248,7 +248,89 @@ func main() {
 	_, okFinal := final.wait(3 * time.Second)
 	check(14, "channel survives the whole scenario", okFinal, "no final message")
 
+	multiplex(ctx, url, token, a, b, room+"-call", opts)
+
 	finish()
+}
+
+// multiplex covers steps 16–19: both send at once, there is no floor, and the
+// mode belongs to the topic.
+func multiplex(ctx context.Context, url, token string, a, b *konet.Client, call string, opts konet.ClientOptions) {
+	callA := a.Channel(call, konet.WithBinaryMode(konet.BinaryMultiplex))
+	callB := b.Channel(call, konet.WithBinaryMode(konet.BinaryMultiplex))
+
+	joinCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	errA := callA.Subscribe(joinCtx)
+	errB := callB.Subscribe(joinCtx)
+	check(16, "multiplex join is confirmed",
+		errA == nil && errB == nil &&
+			callA.BinaryMode() == konet.BinaryMultiplex && callB.BinaryMode() == konet.BinaryMultiplex,
+		fmt.Sprintf("A=%q/%v B=%q/%v", callA.BinaryMode(), errA, callB.BinaryMode(), errB))
+
+	const frames = 10
+	var mu sync.Mutex
+	heard := map[string][][]byte{}
+	senders := map[string]map[string]bool{"A": {}, "B": {}}
+	listen := func(who string) konet.BinarySenderHandler {
+		return func(data []byte, sender string) {
+			mu.Lock()
+			heard[who] = append(heard[who], append([]byte(nil), data...))
+			senders[who][sender] = true
+			mu.Unlock()
+		}
+	}
+	callA.OnBinaryFrom("voice", listen("A"))
+	callB.OnBinaryFrom("voice", listen("B"))
+
+	// Interleaved, with neither side taking anything first.
+	for n := 0; n < frames; n++ {
+		_ = callA.SendBinary("voice", []byte{0xa, byte(n)})
+		_ = callB.SendBinary("voice", []byte{0xb, byte(n)})
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	stream := func(got [][]byte, tag byte) bool {
+		if len(got) != frames {
+			return false
+		}
+		for n, frame := range got {
+			if len(frame) != 2 || frame[0] != tag || frame[1] != byte(n) {
+				return false
+			}
+		}
+		return true
+	}
+	mu.Lock()
+	check(17, "two simultaneous streams both relayed",
+		stream(heard["A"], 0xb) && stream(heard["B"], 0xa),
+		fmt.Sprintf("A heard %v, B heard %v", heard["A"], heard["B"]))
+
+	// 20 — each frame names its sender: one id per stream, and not the same one
+	only := func(set map[string]bool) string {
+		for id := range set {
+			return id
+		}
+		return ""
+	}
+	fromB, fromA := only(senders["A"]), only(senders["B"])
+	check(20, "multiplex frames carry their sender",
+		len(senders["A"]) == 1 && len(senders["B"]) == 1 && fromA != "" && fromB != "" && fromA != fromB,
+		fmt.Sprintf("A heard from %v, B heard from %v", senders["A"], senders["B"]))
+	mu.Unlock()
+
+	_, err := callA.AcquireFloor(ctx)
+	check(18, "multiplex has no floor", err != nil && contains(err.Error(), "floor_disabled"), fmt.Sprint(err))
+
+	walkie := konet.New(url, token, opts)
+	if err := walkie.Connect(ctx); err != nil {
+		fail(19, "a joiner in the other mode is refused", err.Error())
+		return
+	}
+	defer walkie.Disconnect()
+	err = walkie.Channel(call).Subscribe(joinCtx)
+	check(19, "a joiner in the other mode is refused",
+		err != nil && contains(err.Error(), "binary_mode_mismatch"), fmt.Sprint(err))
 }
 
 func finish() {

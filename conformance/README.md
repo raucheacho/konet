@@ -31,6 +31,11 @@ contract, not about one client's internals:
 | 13 | a late joiner receives `konet:history` | replay shape `{messages: [{event, payload, timestamp}]}` |
 | 14 | an unknown event is refused, channel survives | the catch-all `handle_in/3` does not kill the channel |
 | 15 | a second socket of the **same user** shares the floor | the floor is keyed on the `sub` claim, not on the connection |
+| 16 | A and B join `<room>-call` with `binary_mode: multiplex` | the join reply confirms `{binary_mode}` |
+| 17 | A and B send interleaved binary frames | in multiplex both streams are relayed in full and in order, neither echoed |
+| 18 | A asks for the floor on the multiplex topic | `{reason: "floor_disabled"}` — the floor does not exist there |
+| 19 | a third socket joins it without a mode | `{reason: "binary_mode_mismatch", binary_mode: "multiplex"}` |
+| 20 | each multiplex frame names its sender | the server's `sender_size \| sender \| data` prefix, split off by the SDK |
 
 Steps 13 and 15 were covered by no test in any language.
 

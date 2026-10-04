@@ -140,16 +140,25 @@ func (c *Client) Connected() bool {
 	return c.conn != nil
 }
 
-// Channel returns (or creates) a channel for the given topic.
-func (c *Client) Channel(topic string) *Channel {
+// Channel returns (or creates) a channel for the given topic. Options only
+// apply on creation; a later call asking for a different binary mode panics
+// rather than silently handing back a channel in the other one.
+func (c *Client) Channel(topic string, opts ...ChannelOption) *Channel {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if ch, ok := c.channels[topic]; ok {
+		probe := &Channel{}
+		for _, opt := range opts {
+			opt(probe)
+		}
+		if probe.requestedMode != "" && modeOrDefault(probe.requestedMode) != modeOrDefault(ch.requestedMode) {
+			panic(fmt.Sprintf("konet: %s already exists in %s mode", topic, modeOrDefault(ch.requestedMode)))
+		}
 		return ch
 	}
 
-	ch := newChannel(topic, c.send, c.sendBinary, c.nextRef)
+	ch := newChannel(topic, c.send, c.sendBinary, c.nextRef, opts...)
 	c.channels[topic] = ch
 	return ch
 }
@@ -441,4 +450,11 @@ func (c *Client) rejoinChannels(ctx context.Context) {
 		// refuses this client) must not stop the others.
 		_ = ch.rejoin(ctx)
 	}
+}
+
+func modeOrDefault(mode BinaryMode) BinaryMode {
+	if mode == "" {
+		return BinaryExclusive
+	}
+	return mode
 }

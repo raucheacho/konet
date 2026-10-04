@@ -9,7 +9,7 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 from .binary import BROADCAST, PUSH, decode_server_frame, encode_push
-from .channel import Channel
+from .channel import BinaryMode, Channel
 
 
 class KonetClient:
@@ -100,12 +100,27 @@ class KonetClient:
             await self._ws.close()
             self._ws = None
 
-    def channel(self, topic: str) -> Channel:
-        if topic not in self._channels:
-            self._channels[topic] = Channel(
-                topic, self._send, self._send_binary, self._next_ref
-            )
-        return self._channels[topic]
+    def channel(self, topic: str, *, binary_mode: BinaryMode | None = None) -> Channel:
+        """The channel for ``topic``, created on first use.
+
+        ``binary_mode`` only applies then: a later call returns the same
+        channel, and raises if it asks for a different mode rather than
+        silently ignoring it. The mode belongs to the topic — a join asking for
+        a different one from the members already there is refused with
+        ``binary_mode_mismatch``.
+        """
+        existing = self._channels.get(topic)
+        if existing is not None:
+            current = existing.requested_binary_mode or "exclusive"
+            if binary_mode is not None and binary_mode != current:
+                raise ValueError(f"{topic} already exists in {current} mode")
+            return existing
+
+        channel = Channel(
+            topic, self._send, self._send_binary, self._next_ref, binary_mode
+        )
+        self._channels[topic] = channel
+        return channel
 
     async def _send(self, frame: list) -> None:
         if self._ws is None:

@@ -2,11 +2,22 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable, Awaitable, Literal
+
+from .binary import split_sender
 
 EventHandler = Callable[[Any], Awaitable[None] | None]
+#: How binary frames are shared on a topic. ``"exclusive"``: one sender at a
+#: time, arbitrated by the floor — push-to-talk. ``"multiplex"``: every member
+#: sends whenever it likes, with no floor at all — a call.
+BinaryMode = Literal["exclusive", "multiplex"]
+_BINARY_MODES = ("exclusive", "multiplex")
 #: Handles an incoming binary frame.
 BinaryHandler = Callable[[bytes], Awaitable[None] | None]
+#: Handles an incoming binary frame and who sent it: the member's user id,
+#: stamped by the server, on a ``"multiplex"`` topic; ``""`` on an
+#: ``"exclusive"`` one, where the floor holder is the sender.
+BinarySenderHandler = Callable[[bytes, str], Awaitable[None] | None]
 
 
 class Channel:
@@ -16,8 +27,16 @@ class Channel:
         send_fn: Callable,
         send_binary_fn: Callable,
         next_ref: Callable[[], str],
+        binary_mode: BinaryMode | None = None,
     ) -> None:
+        if binary_mode is not None and binary_mode not in _BINARY_MODES:
+            raise ValueError(f"unknown binary mode {binary_mode!r}")
         self.topic = topic
+        # Sent on every join, reconnects included: the server forgets a topic's
+        # mode once it empties, so a rejoin without it would come back as
+        # whatever the server defaults to. None means the server default.
+        self.requested_binary_mode: BinaryMode | None = binary_mode
+        self._binary_mode: BinaryMode | None = None
         self._state: str = "idle"  # idle | joining | joined | errored
         self._send_fn = send_fn
         self._send_binary_fn = send_binary_fn
@@ -27,13 +46,29 @@ class Channel:
         # Kept apart from _handlers because a binary event delivers bytes, not
         # a decoded payload, and mixing them would force every handler to
         # check a type it already knows.
-        self._binary_handlers: dict[str, list[BinaryHandler]] = defaultdict(list)
+        # Each entry remembers whether its handler wants the sender, so one list
+        # keeps registration order across on_binary and on_binary_from.
+        self._binary_handlers: dict[str, list[tuple[Callable, bool]]] = defaultdict(list)
         self._reply_futures: dict[str, asyncio.Future] = {}
         # Whether the application wants this channel joined. Survives socket
         # drops, so a reconnect knows what to restore; cleared only by
         # unsubscribe(), so a channel the caller deliberately left is never
         # silently re-joined.
         self._wants_join = False
+
+    @property
+    def binary_mode(self) -> BinaryMode | None:
+        """The mode the server confirmed for this topic, or None until joined.
+
+        A server older than the mode reports nothing and is read as
+        ``"exclusive"``, which is what it always did.
+        """
+        return self._binary_mode
+
+    def _join_payload(self) -> dict:
+        if self.requested_binary_mode is None:
+            return {}
+        return {"binary_mode": self.requested_binary_mode}
 
     async def subscribe(self) -> None:
         self._wants_join = True
@@ -50,7 +85,7 @@ class Channel:
         self._reply_futures[ref] = fut
 
         try:
-            await self._send_fn([ref, ref, self.topic, "phx_join", {}])
+            await self._send_fn([ref, ref, self.topic, "phx_join", self._join_payload()])
         except Exception:
             self._state = "errored"
             self._reply_futures.pop(ref, None)
@@ -69,6 +104,9 @@ class Channel:
 
         if reply.get("status") == "ok":
             self._state = "joined"
+            response = reply.get("response")
+            mode = response.get("binary_mode") if isinstance(response, dict) else None
+            self._binary_mode = mode or "exclusive"
         else:
             self._state = "errored"
             # _wants_join stays set: a rejection is often a stale or expired
@@ -116,8 +154,11 @@ class Channel:
 
         Three things differ from :meth:`send`, and all follow from the rate:
         Phoenix frames it natively instead of base64 inside JSON, the server
-        never acknowledges it, and it is refused unless this client holds the
-        channel's floor. Take the floor with :meth:`acquire_floor` first.
+        never acknowledges it, and in ``"exclusive"`` mode it is refused unless
+        this client holds the channel's floor — take it with
+        :meth:`acquire_floor` first. In ``"multiplex"`` mode any member may send
+        at any time, and receivers learn who sent each frame through
+        :meth:`on_binary_from`.
         """
         if self._state != "joined":
             raise RuntimeError(f"Channel {self.topic} is not joined")
@@ -128,11 +169,23 @@ class Channel:
 
     def on_binary(self, event: str, handler: BinaryHandler) -> Callable[[], None]:
         """Register a handler for binary frames. Returns an unsubscribe callable."""
-        self._binary_handlers[event].append(handler)
+        return self._add_binary(event, (handler, False))
+
+    def on_binary_from(self, event: str, handler: BinarySenderHandler) -> Callable[[], None]:
+        """Register a handler for binary frames that also receives the sender.
+
+        On a ``"multiplex"`` topic, where several members send at once, the
+        sender is the only way to tell the streams apart — one decoder per
+        sender, for instance. Returns an unsubscribe callable.
+        """
+        return self._add_binary(event, (handler, True))
+
+    def _add_binary(self, event: str, entry: tuple[Callable, bool]) -> Callable[[], None]:
+        self._binary_handlers[event].append(entry)
 
         def off() -> None:
             try:
-                self._binary_handlers[event].remove(handler)
+                self._binary_handlers[event].remove(entry)
             except ValueError:
                 pass  # already removed
 
@@ -143,7 +196,9 @@ class Channel:
 
         At most one member holds it at a time, which is how half-duplex media —
         push-to-talk — is arbitrated. Returns the holder, which is this client
-        on success; raises naming whoever already holds it otherwise.
+        on success; raises naming whoever already holds it otherwise. Only in
+        ``"exclusive"`` mode: a ``"multiplex"`` topic has no floor, and the
+        server refuses with ``floor_disabled``.
         """
         response = await self._request("konet:floor_acquire")
         return response.get("holder", "")
@@ -193,6 +248,7 @@ class Channel:
         if self._state in ("joined", "joining"):
             self._state = "idle"
         self._join_ref = None
+        self._binary_mode = None
 
         # Anything waiting on a reply will never get one: the socket that
         # carried the request is gone. Fail them rather than let them sit until
@@ -216,8 +272,19 @@ class Channel:
 
     def _receive_binary(self, event: str, data: bytes) -> None:
         """Called by the client when a binary frame arrives for this topic."""
-        for handler in list(self._binary_handlers.get(event, [])):
-            result = handler(data)
+        # Several members send at once on a multiplex topic, so the server puts
+        # the sender in front of every frame. Keyed on the *confirmed* mode: a
+        # server older than modes accepts the join, stays exclusive, and stamps
+        # nothing.
+        sender = ""
+        if self._binary_mode == "multiplex":
+            split = split_sender(data)
+            if split is None:
+                return
+            sender, data = split
+
+        for handler, wants_sender in list(self._binary_handlers.get(event, [])):
+            result = handler(data, sender) if wants_sender else handler(data)
             if asyncio.iscoroutine(result):
                 asyncio.create_task(result)
 

@@ -150,3 +150,26 @@ def decode_server_frame(raw: bytes) -> BinaryFrame | None:
         return BinaryFrame(REPLY, topic, status, ref, join_ref, raw[offset:])
 
     return None
+
+
+def split_sender(data: bytes) -> tuple[str, bytes] | None:
+    """Split the sender off a binary frame received on a ``"multiplex"`` topic.
+
+    In that mode the server relays every frame as::
+
+        sender_size | sender | data
+
+    — one length byte, then the sender's user id (the token's ``sub``), then
+    the bytes the sender sent. The server writes it, so it cannot be forged by
+    the sender. ``"exclusive"`` frames carry no prefix: the floor holder is the
+    sender.
+
+    Returns None on a frame too short for its own prefix, like
+    :func:`decode_server_frame`.
+    """
+    if len(data) < 1:
+        return None
+    size = data[0]
+    if len(data) < 1 + size:
+        return None
+    return data[1 : 1 + size].decode("utf-8", errors="replace"), data[1 + size :]

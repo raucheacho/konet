@@ -334,3 +334,104 @@ describe("presence", () => {
     client.disconnect();
   });
 });
+
+describe("binary mode", () => {
+  it("leaves the join payload empty by default and reads an old server as exclusive", async () => {
+    const { channel, join } = await connectAndJoin();
+
+    // Unchanged on the wire for every existing push-to-talk client.
+    expect(join[4]).toEqual({});
+    // A server older than the mode replies `{}`; it only ever did exclusive.
+    expect(channel.binaryMode).toBe("exclusive");
+  });
+
+  it("asks for multiplex on every join, reconnects included", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    client.connect();
+    const socket = MockWebSocket.last();
+    const channel = client.channel("room:call-1", { binaryMode: "multiplex" });
+    const joined = channel.subscribe();
+
+    socket.open();
+    const join = socket.lastFrameOf("phx_join")!;
+    expect(join[4]).toEqual({ binary_mode: "multiplex" });
+    replyTo(socket, join, "ok", { binary_mode: "multiplex" });
+    await joined;
+    expect(channel.binaryMode).toBe("multiplex");
+
+    // The server forgets a topic's mode once it empties, so a rejoin that
+    // dropped the parameter would come back exclusive — or be refused.
+    socket.drop();
+    expect(channel.binaryMode).toBeNull();
+    await vi.advanceTimersByTimeAsync(1_000);
+    const socket2 = MockWebSocket.last();
+    socket2.open();
+    expect(socket2.lastFrameOf("phx_join")![4]).toEqual({ binary_mode: "multiplex" });
+
+    client.disconnect();
+  });
+
+  it("surfaces a mode mismatch as a refused join", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    client.connect();
+    const socket = MockWebSocket.last();
+    const joined = client.channel("room:walkie").subscribe();
+    socket.open();
+
+    replyTo(socket, socket.lastFrameOf("phx_join")!, "error", {
+      reason: "binary_mode_mismatch",
+      binary_mode: "multiplex",
+    });
+    await expect(joined).rejects.toThrow(/binary_mode_mismatch/);
+  });
+
+  it("hands a multiplex frame to its handler with the sender split off", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    client.connect();
+    const socket = MockWebSocket.last();
+    const channel = client.channel("room:call-3", { binaryMode: "multiplex" });
+    const joined = channel.subscribe();
+    socket.open();
+    replyTo(socket, socket.lastFrameOf("phx_join")!, "ok", { binary_mode: "multiplex" });
+    await joined;
+
+    const heard: Array<[number[], string | undefined]> = [];
+    channel.on("a", (data, sender) => heard.push([Array.from(data as Uint8Array), sender]));
+
+    const stamped = (id: string, ...data: number[]) => {
+      const bytes = new TextEncoder().encode(id);
+      return new Uint8Array([bytes.length, ...bytes, ...data]);
+    };
+    socket.serverBroadcastBinary("room:call-3", "a", stamped("alice", 1, 2));
+    socket.serverBroadcastBinary("room:call-3", "a", stamped("bob", 1, 2));
+    // Too short for its own prefix: dropped, not delivered half-parsed.
+    socket.serverBroadcastBinary("room:call-3", "a", new Uint8Array([9]));
+
+    expect(heard).toEqual([
+      [[1, 2], "alice"],
+      [[1, 2], "bob"],
+    ]);
+    client.disconnect();
+  });
+
+  it("leaves an exclusive frame untouched, with no sender", async () => {
+    const { client, socket, channel } = await connectAndJoin();
+
+    const heard: Array<[number[], string | undefined]> = [];
+    channel.on("a", (data, sender) => heard.push([Array.from(data as Uint8Array), sender]));
+    socket.serverBroadcastBinary(TOPIC, "a", new Uint8Array([5, 1, 2]));
+
+    // The leading 5 is data here, not a length: exclusive frames have no prefix.
+    expect(heard).toEqual([[[5, 1, 2], undefined]]);
+    client.disconnect();
+  });
+
+  it("refuses to hand back an existing channel under a different mode", () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    const channel = client.channel("room:call-2", { binaryMode: "multiplex" });
+
+    expect(client.channel("room:call-2")).toBe(channel);
+    expect(client.channel("room:call-2", { binaryMode: "multiplex" })).toBe(channel);
+    expect(() => client.channel("room:call-2", { binaryMode: "exclusive" })).toThrow(/multiplex/);
+  });
+});

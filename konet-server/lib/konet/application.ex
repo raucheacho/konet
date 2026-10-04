@@ -13,6 +13,7 @@ defmodule Konet.Application do
       Konet.ChannelRegistry,
       Konet.RateLimiter,
       Konet.Floor,
+      Konet.BinaryMode,
       Konet.LogBuffer,
       Konet.History,
       {Task.Supervisor, name: Konet.TaskSupervisor},

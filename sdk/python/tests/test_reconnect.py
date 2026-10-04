@@ -296,3 +296,64 @@ def test_answered_heartbeat_keeps_the_socket(monkeypatch):
         await client.disconnect()
 
     run(scenario())
+
+
+# ── Binary mode ────────────────────────────────────────────────────────────
+
+
+def test_default_join_asks_for_no_mode_and_reads_exclusive(monkeypatch):
+    async def scenario():
+        transport = FakeTransport()
+        client = await _client(monkeypatch, transport)
+        channel = await _join(client, transport)
+
+        # Unchanged on the wire for every existing push-to-talk client.
+        assert transport.current.joins()[-1][4] == {}
+        # The reply carries no mode, as from a server older than it.
+        assert channel.binary_mode == "exclusive"
+
+        await client.disconnect()
+
+    run(scenario())
+
+
+def test_multiplex_is_asked_on_every_join(monkeypatch):
+    async def scenario():
+        transport = FakeTransport()
+        client = await _client(monkeypatch, transport)
+
+        channel = client.channel("room:call", binary_mode="multiplex")
+        task = asyncio.create_task(channel.subscribe())
+        await asyncio.sleep(0)
+        join = transport.current.joins()[-1]
+        assert join[4] == {"binary_mode": "multiplex"}
+        transport.current.reply_ok(join[1], "room:call", {"binary_mode": "multiplex"})
+        await task
+        assert channel.binary_mode == "multiplex"
+
+        # The server forgets a topic's mode once it empties, so a rejoin that
+        # dropped the parameter would come back exclusive — or be refused.
+        transport.current.drop()
+        for _ in range(200):
+            await asyncio.sleep(0.005)
+            if len(transport.sockets) > 1 and transport.current.joins():
+                break
+
+        assert channel.binary_mode is None
+        assert transport.current.joins()[-1][4] == {"binary_mode": "multiplex"}
+
+        await client.disconnect()
+
+    run(scenario())
+
+
+def test_channel_refuses_a_different_mode_for_an_existing_topic():
+    client = KonetClient("ws://test/socket", token="tok")
+    channel = client.channel("room:call", binary_mode="multiplex")
+
+    assert client.channel("room:call") is channel
+    assert client.channel("room:call", binary_mode="multiplex") is channel
+    with pytest.raises(ValueError, match="multiplex"):
+        client.channel("room:call", binary_mode="exclusive")
+    with pytest.raises(ValueError, match="unknown"):
+        client.channel("room:other", binary_mode="duplex")

@@ -19,7 +19,7 @@ Quick start::
 """
 
 from .client import KonetClient
-from .channel import Channel
+from .channel import BinaryMode, Channel
 
-__all__ = ["KonetClient", "Channel"]
+__all__ = ["KonetClient", "Channel", "BinaryMode"]
 __version__ = "0.1.0"

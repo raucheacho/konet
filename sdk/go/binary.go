@@ -197,3 +197,24 @@ func decodeServerBinaryFrame(raw []byte) (BinaryFrame, error) {
 
 	return BinaryFrame{}, fmt.Errorf("konet: type de trame binaire inconnu (%d)", raw[0])
 }
+
+// splitSender splits the sender off a binary frame received on a multiplex
+// topic. In that mode the server relays every frame as
+//
+//	sender_size | sender | data
+//
+// — one length byte, then the sender's user id (the token's sub), then the bytes
+// the sender sent. The server writes it, so it cannot be forged by the sender.
+// Exclusive frames carry no prefix: the floor holder is the sender.
+//
+// data aliases frame rather than copying it.
+func splitSender(frame []byte) (sender string, data []byte, err error) {
+	if len(frame) < 1 {
+		return "", nil, ErrShortFrame
+	}
+	size := int(frame[0])
+	if len(frame) < 1+size {
+		return "", nil, ErrShortFrame
+	}
+	return string(frame[1 : 1+size]), frame[1+size:], nil
+}

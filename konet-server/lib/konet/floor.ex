@@ -7,6 +7,9 @@ defmodule Konet.Floor do
   no* rather than mixed in. Konet stays generic: it arbitrates who may send,
   it does not know what is being sent.
 
+  Only for topics in `:exclusive` binary mode. A `:multiplex` topic never
+  reaches this module — see `Konet.BinaryMode`.
+
   Two properties matter and both are handled here rather than by callers:
 
     * **Acquisition is atomic.** Two clients pressing at the same millisecond
