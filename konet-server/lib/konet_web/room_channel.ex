@@ -73,6 +73,10 @@ defmodule KonetWeb.RoomChannel do
       # and with the mode in force so it can say which side is wrong.
       {:error, {:mismatch, current}} ->
         {:error, %{reason: "binary_mode_mismatch", binary_mode: Atom.to_string(current)}}
+
+      # The ceiling is in the reply so a client can say why, not just that.
+      {:error, {:full, max}} ->
+        {:error, %{reason: "topic_full", max_members: max}}
     end
   end
 

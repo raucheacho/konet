@@ -22,6 +22,15 @@ defmodule Konet.BinaryMode do
   Members are monitored and dropped when their channel process dies, which is
   the only way a channel ever leaves — no explicit release, nothing to forget.
 
+  **A multiplex topic has a member ceiling**, `KONET_MULTIPLEX_MAX_MEMBERS`
+  (default 16, `0` for none). Every member of such a topic may send, and with
+  *n* senders the server relays *n × (n − 1)* streams; on a single node, one
+  oversized topic degrades every other. In exclusive mode the floor bounds a
+  topic to one sender, so no ceiling applies there. It is checked here, in the
+  same serialized step as the mode, so it costs the hot path nothing — and it
+  counts members, not active senders, because telling who is "active" would
+  mean tracking every frame.
+
   A channel caches its own mode at join. That cache cannot go stale: the mode
   only changes once the topic is empty, and a cached member is by definition
   still in it. The binary hot path therefore reads no table at all.
@@ -29,6 +38,7 @@ defmodule Konet.BinaryMode do
   use GenServer
 
   @table :konet_binary_mode
+  @default_multiplex_max_members 16
   @modes %{"exclusive" => :exclusive, "multiplex" => :multiplex}
 
   def start_link(_opts) do
@@ -46,8 +56,9 @@ defmodule Konet.BinaryMode do
   @doc """
   Records `pid` as a member of `topic` in `mode`.
 
-  Returns `{:ok, mode}`, or `{:error, {:mismatch, current}}` when the members
-  already there run the other mode.
+  Returns `{:ok, mode}`, `{:error, {:mismatch, current}}` when the members
+  already there run the other mode, or `{:error, {:full, max}}` when a multiplex
+  topic already holds its ceiling of members.
   """
   def claim(topic, mode, pid \\ self()) when mode in [:exclusive, :multiplex] do
     GenServer.call(__MODULE__, {:claim, topic, mode, pid})
@@ -88,9 +99,14 @@ defmodule Konet.BinaryMode do
     # nobody uses any more.
     members = Enum.filter(:ets.lookup(@table, topic), &alive_member?/1)
 
+    max = multiplex_max_members()
+
     case members do
       [{_, _, current} | _] when current != mode ->
         {:reply, {:error, {:mismatch, current}}, state}
+
+      _ when mode == :multiplex and max > 0 and length(members) >= max ->
+        {:reply, {:error, {:full, max}}, state}
 
       _ ->
         :ets.insert(@table, {topic, pid, mode})
@@ -110,6 +126,10 @@ defmodule Konet.BinaryMode do
         {:noreply, %{state | refs: refs}}
     end
   end
+
+  @doc "The member ceiling of a multiplex topic; 0 means none."
+  def multiplex_max_members,
+    do: Application.get_env(:konet, :multiplex_max_members, @default_multiplex_max_members)
 
   defp alive_member?({_topic, pid, _mode} = row) do
     if Process.alive?(pid) do

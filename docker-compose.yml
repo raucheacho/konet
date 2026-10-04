@@ -34,6 +34,9 @@ services:
       # own and would otherwise starve a talker's other events.
       KONET_RATE_LIMIT_BINARY: "${KONET_RATE_LIMIT_BINARY:-120}"
       KONET_FLOOR_MAX_HOLD_MS: "${KONET_FLOOR_MAX_HOLD_MS:-30000}"
+      # Members of one multiplex topic (all of them may send; the fan-out grows
+      # with the square of the count). 0 removes the ceiling.
+      KONET_MULTIPLEX_MAX_MEMBERS: "${KONET_MULTIPLEX_MAX_MEMBERS:-16}"
       # Set this when a reverse proxy terminates TLS in front (Coolify, Dokploy,
       # Traefik, Nginx). Without it every connection carries the proxy's IP and
       # KONET_CONN_RATE_LIMIT becomes one global budget — the deployment

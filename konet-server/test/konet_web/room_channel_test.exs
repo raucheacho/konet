@@ -421,6 +421,18 @@ defmodule KonetWeb.RoomChannelTest do
       assert_receive {:pushed, "bob", "a", {:binary, <<1, 2, 3>>}}
     end
 
+    test "a member beyond the ceiling is refused and told it" do
+      Application.put_env(:konet, :multiplex_max_members, 2)
+      on_exit(fn -> Application.delete_env(:konet, :multiplex_max_members) end)
+      mux = %{"binary_mode" => "multiplex"}
+
+      assert {:ok, _, _} = start_member("alice", "room:mux-full", mux)
+      assert {:ok, _, _} = start_member("bob", "room:mux-full", mux)
+
+      assert {:error, %{reason: "topic_full", max_members: 2}} =
+               start_member("carol", "room:mux-full", mux)
+    end
+
     test "leaving touches no floor" do
       assert {:ok, alice, _} =
                start_member("alice", "room:mux-leave", %{"binary_mode" => "multiplex"})

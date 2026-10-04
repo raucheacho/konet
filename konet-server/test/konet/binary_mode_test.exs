@@ -103,4 +103,47 @@ defmodule Konet.BinaryModeTest do
         flunk("Konet.BinaryMode never came back")
     end
   end
+
+  describe "multiplex member ceiling" do
+    setup do
+      Application.put_env(:konet, :multiplex_max_members, 2)
+      on_exit(fn -> Application.delete_env(:konet, :multiplex_max_members) end)
+    end
+
+    test "a multiplex topic refuses a member beyond the ceiling" do
+      topic = "room:bm-full"
+      assert {:ok, :multiplex} = BinaryMode.claim(topic, :multiplex, member())
+      assert {:ok, :multiplex} = BinaryMode.claim(topic, :multiplex, member())
+      assert {:error, {:full, 2}} = BinaryMode.claim(topic, :multiplex, member())
+    end
+
+    test "a member leaving frees its place" do
+      topic = "room:bm-full-leave"
+      alice = member()
+      assert {:ok, :multiplex} = BinaryMode.claim(topic, :multiplex, alice)
+      assert {:ok, :multiplex} = BinaryMode.claim(topic, :multiplex, member())
+
+      kill(alice)
+      :sys.get_state(BinaryMode)
+
+      assert {:ok, :multiplex} = BinaryMode.claim(topic, :multiplex, member())
+    end
+
+    test "an exclusive topic has no ceiling: the floor already bounds it" do
+      topic = "room:bm-full-exclusive"
+
+      for _ <- 1..5 do
+        assert {:ok, :exclusive} = BinaryMode.claim(topic, :exclusive, member())
+      end
+    end
+
+    test "0 removes the ceiling" do
+      Application.put_env(:konet, :multiplex_max_members, 0)
+      topic = "room:bm-unbounded"
+
+      for _ <- 1..5 do
+        assert {:ok, :multiplex} = BinaryMode.claim(topic, :multiplex, member())
+      end
+    end
+  end
 end
