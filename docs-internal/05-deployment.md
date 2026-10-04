@@ -95,17 +95,25 @@ Environment block, grouped by role:
 | `KONET_JWT_SECRET` | `${KONET_JWT_SECRET:?…required}` | `:?` — compose **fails fast** if unset |
 | `SECRET_KEY_BASE` | `${SECRET_KEY_BASE:?…required}` | same |
 | `KONET_ANON_KEY` / `KONET_SERVICE_KEY` | `${…:-}` | optional; empty is valid |
-| `KONET_STUDIO_PASSWORD` | `${…:-}` | **empty means no Studio login** |
+| `KONET_STUDIO_PASSWORD` | `${…:?…required}` | `:?` — compose **fails fast** if unset; it used to default to empty, i.e. no Studio login |
+| `KONET_SECRET_FILE` | `${…:-/data/jwt_secret}` | on the `konet-data` volume, so a Studio rotation survives restarts and redeploys |
 | `KONET_ALLOWED_ORIGINS` | `${…:-*}` | `*` disables the WebSocket origin check |
 | `KONET_RATE_LIMIT` | `${…:-60}` | broadcasts/s per socket |
 | `KONET_CONN_RATE_LIMIT` | `${…:-200}` | connections/min per IP |
 | `KONET_RATE_LIMIT_BINARY` | `${…:-120}` | binary frames/s per socket |
 | `KONET_FLOOR_MAX_HOLD_MS` | `${…:-30000}` | how long one member may hold the floor |
+| `KONET_MULTIPLEX_MAX_MEMBERS` | `${…:-16}` | members of one multiplex topic; `0` = no ceiling |
 | `KONET_TRUST_PROXY_HEADERS` | `${…:-false}` | **set this behind Coolify/Dokploy/Traefik/Nginx** — see below |
 | `KONET_HISTORY_LIMIT` | `${…:-0}` | replay off by default |
 | `KONET_HISTORY_TTL` | `${…:-900}` | seconds a room's buffer outlives its last message |
 | `KONET_LOG_BROADCASTS` | `${…:-true}` | per-broadcast Studio logging; `false` under load |
 | `KONET_WEBHOOK_URL` / `KONET_WEBHOOK_SECRET` | `${…:-}` | optional |
+| `KONET_WEBHOOK_RETRIES` | `${…:-3}` | total attempts per event |
+| `KONET_WEBHOOK_CONCURRENCY` | `${…:-50}` | deliveries in flight; beyond it an event is dropped and logged |
+
+The service mounts the named volume `konet-data` at `/data`. The image creates
+`/data` owned by `nobody` (the user the release runs as), so a fresh volume
+inherits a directory the server can write the rotated secret to.
 
 Every variable `runtime.exs` reads is now listed with its default.
 `KONET_RATE_LIMIT_BINARY` and `KONET_FLOOR_MAX_HOLD_MS` used to work only if you

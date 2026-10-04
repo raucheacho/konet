@@ -5,20 +5,28 @@ sidecars — one service, a handful of env vars, done.
 
 ## Required env vars
 
-Every deployment needs these two (generate with `openssl rand -hex 32`):
+Every deployment needs these (generate the secrets with `openssl rand -hex 32`):
 
 ```
 KONET_JWT_SECRET=<random 32+ chars>
 SECRET_KEY_BASE=<random 64 chars>
+KONET_STUDIO_PASSWORD=<pick one>
 ```
+
+`docker-compose.yml` refuses to start without any of the three. Running the image
+directly without `KONET_STUDIO_PASSWORD` leaves the Studio without a login (the
+server warns at boot).
 
 Strongly recommended for anything reachable beyond localhost:
 
 ```
-KONET_STUDIO_PASSWORD=<pick one>
 KONET_ALLOWED_ORIGINS=https://app.example.com
 KONET_HOST=realtime.example.com
 ```
+
+`docker-compose.yml` also mounts a `konet-data` volume at `/data` and sets
+`KONET_SECRET_FILE=/data/jwt_secret`, so a secret rotated from the Studio survives
+restarts. Running the image directly, mount a volume and set it yourself.
 
 See [Configuration](/server/configuration) for the full list.
 

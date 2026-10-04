@@ -61,6 +61,13 @@ must have write access to the *tap* and *bucket* repositories, not to `konet`.
 Result: 6 binaries (3 OSes × 2 architectures), a checksums file,
 `brew install raucheacho/tap/konet` and the Scoop bucket entry.
 
+After GoReleaser, `actions/attest-build-provenance` attests every archive and
+the checksums file (the workflow holds `id-token: write` and
+`attestations: write` for it). Anyone can then check an archive came from this
+workflow with `gh attestation verify <archive> --repo raucheacho/konet`.
+`install.sh` verifies the checksum — and refuses to install when it cannot,
+unless `KONET_SKIP_CHECKSUM=1` — but does not check the attestation.
+
 ## Two monorepo traps, both fixed
 
 ### Fixed: `../LICENSE` in the archives
@@ -196,7 +203,8 @@ re-run is a no-op thanks to the `ls-remote` check, while a genuine push failure
 4. Watch six workflows. `release-sdk-js` and `release-sdk-rn` race by design —
    the RN build marks the core external and resolves it from the sibling source
    (`tsconfig` `paths`), so it never needs the core to be on npm first.
-5. Check the GitHub release page for the CLI archives and checksums.
+5. Check the GitHub release page for the CLI archives and checksums, and that
+   the *Attest build provenance* step of `release-cli` succeeded.
 6. Bump nothing in the repo afterwards — the JS, RN and Python version fields
    stay at their stale values on purpose; the server derives its own from the
    tag at build time.

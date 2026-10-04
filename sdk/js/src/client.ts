@@ -1,4 +1,4 @@
-import { Channel } from "./channel.js";
+import { Channel, ChannelOptions } from "./channel.js";
 import { BROADCAST, decodeServerFrame, encodePush, PUSH } from "./binary.js";
 
 export interface KonetClientOptions {
@@ -14,6 +14,37 @@ export interface KonetClientOptions {
 }
 
 type ConnectionState = "disconnected" | "connecting" | "connected" | "closing";
+
+/**
+ * What the connection is doing, as reported to `onStatus()` handlers.
+ *
+ * - `connecting`: a socket is being opened.
+ * - `connected`: it is open; channels are being re-joined.
+ * - `reconnecting`: it was lost, and attempt `attempt` starts in `delayMs`.
+ * - `disconnected`: `disconnect()` was called.
+ * - `failed`: `maxReconnectAttempts` were used up; nothing more is tried until
+ *   `connect()` or `checkConnection()`.
+ */
+export type ConnectionStatus =
+  | { state: "connecting" }
+  | { state: "connected" }
+  | { state: "reconnecting"; attempt: number; delayMs: number }
+  | { state: "disconnected" }
+  | { state: "failed" };
+
+/** Ceiling on one reconnect delay. */
+const MAX_RECONNECT_DELAY_MS = 30_000;
+
+/**
+ * Exponential backoff with "equal jitter": half the step is fixed, half is
+ * random. Without the random half, every client dropped by a server restart
+ * came back at the same 1 s, 2 s, 4 s — together, against a cold server and a
+ * per-IP connection budget. Never above the un-jittered step.
+ */
+export function reconnectDelay(baseMs: number, attempt: number, random = Math.random): number {
+  const step = Math.min(baseMs * Math.pow(2, attempt), MAX_RECONNECT_DELAY_MS);
+  return step / 2 + random() * (step / 2);
+}
 
 // Phoenix Channels v2 wire format: [join_ref, ref, topic, event, payload]
 type PhxFrame = [string | null, string | null, string, string, unknown];
@@ -33,6 +64,7 @@ export class KonetClient {
   private pendingHeartbeatRef: string | null = null;
   private lastTickAt = 0;
   private closedByUser = false;
+  private statusHandlers: Array<(status: ConnectionStatus) => void> = [];
 
   constructor(url: string, options: KonetClientOptions) {
     this.url = url;
@@ -53,7 +85,29 @@ export class KonetClient {
     return this;
   }
 
+  /**
+   * Called on every change of connection status — to show "reconnecting…", or
+   * to learn that the client gave up. Returns a function that removes it.
+   */
+  onStatus(handler: (status: ConnectionStatus) => void): () => void {
+    this.statusHandlers.push(handler);
+    return () => {
+      this.statusHandlers = this.statusHandlers.filter((h) => h !== handler);
+    };
+  }
+
+  private emitStatus(status: ConnectionStatus): void {
+    for (const handler of [...this.statusHandlers]) {
+      try {
+        handler(status);
+      } catch {
+        // A failing UI callback must not take the connection logic with it.
+      }
+    }
+  }
+
   disconnect(): void {
+    const wasActive = this.state !== "disconnected" || this.reconnectTimer !== null;
     this.closedByUser = true;
     this.state = "closing";
     this.clearTimers();
@@ -65,11 +119,23 @@ export class KonetClient {
 
     ws?.close(1000, "client disconnect");
     this.state = "disconnected";
+    if (wasActive) this.emitStatus({ state: "disconnected" });
   }
 
-  channel(topic: string): Channel {
-    if (this.channels.has(topic)) {
-      return this.channels.get(topic)!;
+  /**
+   * The channel for `topic`, created on first use. `options` only apply then:
+   * a second call returns the same channel, and throws if it asks for a
+   * different binary mode rather than silently ignoring it.
+   */
+  channel(topic: string, options: ChannelOptions = {}): Channel {
+    const existing = this.channels.get(topic);
+    if (existing) {
+      if (options.binaryMode && options.binaryMode !== (existing.requestedMode ?? "exclusive")) {
+        throw new Error(
+          `${topic} already exists in ${existing.requestedMode ?? "exclusive"} mode`
+        );
+      }
+      return existing;
     }
 
     const ch = new Channel(
@@ -79,7 +145,8 @@ export class KonetClient {
       (joinRef, ref, chanTopic, event, data) =>
         this.sendBinary(joinRef, ref, chanTopic, event, data),
       () => String(++this.refCounter),
-      () => this.ws?.readyState === WebSocket.OPEN
+      () => this.ws?.readyState === WebSocket.OPEN,
+      options
     );
 
     this.channels.set(topic, ch);
@@ -134,6 +201,7 @@ export class KonetClient {
 
   private openSocket(): void {
     this.state = "connecting";
+    this.emitStatus({ state: "connecting" });
 
     // Phoenix mounts the actual websocket transport at "<socket path>/websocket",
     // not at the socket path itself (e.g. "/socket" -> "/socket/websocket").
@@ -149,6 +217,7 @@ export class KonetClient {
       this.state = "connected";
       this.reconnectAttempts = 0;
       this.pendingHeartbeatRef = null;
+      this.emitStatus({ state: "connected" });
 
       // The server knows nothing about the topics this client had joined on
       // the previous socket, so re-issue phx_join before anything else goes
@@ -330,14 +399,17 @@ export class KonetClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectAttempts >= this.opts.maxReconnectAttempts) return;
+    if (this.reconnectAttempts >= this.opts.maxReconnectAttempts) {
+      // Used to return silently: an app had no way to know the client had
+      // stopped trying, short of polling `connected` forever.
+      this.emitStatus({ state: "failed" });
+      return;
+    }
 
-    const delay = Math.min(
-      this.opts.reconnectDelayMs * Math.pow(2, this.reconnectAttempts),
-      30_000
-    );
+    const delay = reconnectDelay(this.opts.reconnectDelayMs, this.reconnectAttempts);
 
     this.reconnectAttempts++;
+    this.emitStatus({ state: "reconnecting", attempt: this.reconnectAttempts, delayMs: delay });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.openSocket();

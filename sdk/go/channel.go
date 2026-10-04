@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 )
 
 type channelState int
@@ -16,6 +18,45 @@ const (
 	channelJoined  channelState = iota
 	channelErrored channelState = iota
 )
+
+// BinaryMode is how binary frames are shared on a topic.
+type BinaryMode string
+
+const (
+	// BinaryExclusive allows one sender at a time, arbitrated by the floor
+	// (AcquireFloor). Half-duplex: push-to-talk, a radio net. The default.
+	BinaryExclusive BinaryMode = "exclusive"
+	// BinaryMultiplex lets every member send whenever it likes. There is no
+	// floor at all. Full-duplex: a call.
+	BinaryMultiplex BinaryMode = "multiplex"
+)
+
+// ChannelOption configures a channel at creation. See Client.Channel.
+type ChannelOption func(*Channel)
+
+// WithBinaryMode asks for a binary mode at join. The mode belongs to the
+// topic, not to one member: a join asking for a different mode from the
+// members already there is refused with binary_mode_mismatch, so every member
+// of a topic must ask for the same one.
+func WithBinaryMode(mode BinaryMode) ChannelOption {
+	return func(c *Channel) { c.requestedMode = mode }
+}
+
+// BinaryError is the payload of a channel's "binary_error" event: the server
+// refused binary frames, for Reason — "floor_required" (exclusive topic, floor
+// not held) or "rate_limited". Reported at most once per reason per second.
+// Register for it with On("binary_error", …).
+type BinaryError struct {
+	Topic  string
+	Reason string
+}
+
+// binaryRefPrefix marks the refs of binary pushes, so a refusal can be
+// recognised without remembering anything per frame.
+const binaryRefPrefix = "b"
+
+// binaryErrorInterval folds refusals of the same reason closer than this.
+const binaryErrorInterval = time.Second
 
 // ErrSocketClosed reports a request whose socket went away before the server
 // replied. Distinct from a refusal: nothing is known about whether the server
@@ -41,6 +82,12 @@ type EventHandler func(payload interface{})
 // the duration of the call — copy it to keep it.
 type BinaryHandler func(data []byte)
 
+// BinarySenderHandler is a BinaryHandler that also receives who sent the
+// frame. sender is the member's user id, stamped by the server, on a
+// BinaryMultiplex topic; it is "" on a BinaryExclusive one, where the floor
+// holder is the sender.
+type BinarySenderHandler func(data []byte, sender string)
+
 // Handlers are stored with an identity of their own rather than compared by
 // value: Go gives no usable equality for funcs, and comparing code pointers
 // (fmt.Sprintf("%p", h)) matches distinct closures that share a body. An
@@ -52,8 +99,9 @@ type eventSub struct {
 }
 
 type binarySub struct {
-	id uint64
-	fn BinaryHandler
+	id   uint64
+	fn   BinaryHandler
+	from BinarySenderHandler
 }
 
 // Channel represents a subscription to a Konet channel topic.
@@ -72,6 +120,15 @@ type Channel struct {
 	wantsJoin  bool
 	handlerSeq uint64
 
+	// requestedMode is sent on every join, reconnects included: the server
+	// forgets a topic's mode once it empties, so a rejoin without it would come
+	// back as whatever the server defaults to. Empty means the server default.
+	requestedMode BinaryMode
+	// confirmedMode is what the server said at the last successful join.
+	confirmedMode BinaryMode
+	// binaryErrorAt is when each refusal reason was last reported.
+	binaryErrorAt map[string]time.Time
+
 	sendFn       func(phxFrame) error
 	sendBinaryFn func(joinRef, ref, topic, event string, data []byte) error
 	nextRef      func() string
@@ -87,17 +144,39 @@ func newChannel(
 	sendFn func(phxFrame) error,
 	sendBinaryFn func(joinRef, ref, topic, event string, data []byte) error,
 	nextRef func() string,
+	opts ...ChannelOption,
 ) *Channel {
-	return &Channel{
+	c := &Channel{
 		topic:          topic,
 		state:          channelIdle,
 		handlers:       make(map[string][]eventSub),
 		binaryHandlers: make(map[string][]binarySub),
+		binaryErrorAt:  make(map[string]time.Time),
 		replies:        make(map[string]chan interface{}),
 		sendFn:         sendFn,
 		sendBinaryFn:   sendBinaryFn,
 		nextRef:        nextRef,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// BinaryMode returns the mode the server confirmed for this topic, or "" until
+// the channel is joined. A server older than the mode reports nothing and is
+// read as BinaryExclusive, which is what it always did.
+func (c *Channel) BinaryMode() BinaryMode {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.confirmedMode
+}
+
+func (c *Channel) joinPayload() map[string]interface{} {
+	if c.requestedMode == "" {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{"binary_mode": string(c.requestedMode)}
 }
 
 // Topic returns the channel's topic.
@@ -131,7 +210,7 @@ func (c *Channel) Subscribe(ctx context.Context) error {
 		Ref:     &ref,
 		Topic:   c.topic,
 		Event:   "phx_join",
-		Payload: map[string]interface{}{},
+		Payload: c.joinPayload(),
 	}); err != nil {
 		c.mu.Lock()
 		c.state = channelErrored
@@ -170,10 +249,18 @@ func (c *Channel) Subscribe(ctx context.Context) error {
 			return fmt.Errorf("subscribe: server error: %v", m["response"])
 		}
 
+		confirmed := BinaryExclusive
+		if resp, ok := m["response"].(map[string]interface{}); ok {
+			if mode, ok := resp["binary_mode"].(string); ok && mode != "" {
+				confirmed = BinaryMode(mode)
+			}
+		}
+
 		c.mu.Lock()
 		// A reply from a join that a reconnect already superseded.
 		if c.joinRef != nil && *c.joinRef == ref {
 			c.state = channelJoined
+			c.confirmedMode = confirmed
 		}
 		c.mu.Unlock()
 		return nil
@@ -251,8 +338,11 @@ func (c *Channel) Send(event string, payload interface{}) error {
 //
 // Three things differ from Send, and all follow from the rate: Phoenix frames
 // it natively instead of base64 inside JSON, the server never acknowledges it,
-// and it is refused unless this client holds the channel's floor. Take the
-// floor with AcquireFloor first.
+// and in BinaryExclusive mode it is refused unless this client holds the
+// channel's floor — take it with AcquireFloor first. In BinaryMultiplex mode
+// any member may send at any time, and receivers learn who sent each frame
+// through OnBinaryFrom. A refused frame is reported as a "binary_error" event
+// carrying a BinaryError, at most once per reason per second.
 //
 // data is copied into the frame, so the caller may reuse its buffer at once.
 func (c *Channel) SendBinary(event string, data []byte) error {
@@ -272,16 +362,30 @@ func (c *Channel) SendBinary(event string, data []byte) error {
 
 	// Not tracked like Send: at fifty frames a second, a reply channel per
 	// frame would cost more than the frames do.
-	return c.sendBinaryFn(joinRef, c.nextRef(), c.topic, event, data)
+	// The ref's prefix is enough to recognise a refusal; see "binary_error".
+	return c.sendBinaryFn(joinRef, binaryRefPrefix+c.nextRef(), c.topic, event, data)
 }
 
 // OnBinary registers a handler for binary frames on this event. Returns a
 // function that removes it.
 func (c *Channel) OnBinary(event string, handler BinaryHandler) func() {
+	return c.addBinarySub(event, binarySub{fn: handler})
+}
+
+// OnBinaryFrom registers a handler for binary frames on this event that also
+// receives the sender. On a BinaryMultiplex topic, where several members send
+// at once, the sender is the only way to tell the streams apart — one decoder
+// per sender, for instance. Returns a function that removes it.
+func (c *Channel) OnBinaryFrom(event string, handler BinarySenderHandler) func() {
+	return c.addBinarySub(event, binarySub{from: handler})
+}
+
+func (c *Channel) addBinarySub(event string, sub binarySub) func() {
 	c.mu.Lock()
 	c.handlerSeq++
 	id := c.handlerSeq
-	c.binaryHandlers[event] = append(c.binaryHandlers[event], binarySub{id: id, fn: handler})
+	sub.id = id
+	c.binaryHandlers[event] = append(c.binaryHandlers[event], sub)
 	c.mu.Unlock()
 
 	return func() {
@@ -300,7 +404,9 @@ func (c *Channel) OnBinary(event string, handler BinaryHandler) func() {
 // AcquireFloor claims the right to send on this channel. At most one member
 // holds it at a time, which is how half-duplex media — push-to-talk — is
 // arbitrated. Returns the holder, which is this client on success; an error
-// names whoever already holds it.
+// names whoever already holds it. Only in BinaryExclusive mode: a
+// BinaryMultiplex topic has no floor, and the server refuses with
+// floor_disabled.
 func (c *Channel) AcquireFloor(ctx context.Context) (string, error) {
 	response, err := c.request(ctx, "konet:floor_acquire")
 	if err != nil {
@@ -398,6 +504,7 @@ func (c *Channel) socketClosed() {
 		c.state = channelIdle
 	}
 	c.joinRef = nil
+	c.confirmedMode = ""
 	replies := c.replies
 	c.replies = make(map[string]chan interface{})
 	c.mu.Unlock()
@@ -432,13 +539,29 @@ func (c *Channel) setState(s channelState) {
 func (c *Channel) receiveBinary(event string, data []byte) {
 	c.mu.RLock()
 	subs := append([]binarySub{}, c.binaryHandlers[event]...)
+	multiplex := c.confirmedMode == BinaryMultiplex
 	c.mu.RUnlock()
+
+	// Several members send at once on a multiplex topic, so the server puts the
+	// sender in front of every frame. Keyed on the *confirmed* mode: a server
+	// older than modes accepts the join, stays exclusive, and stamps nothing.
+	sender := ""
+	if multiplex {
+		var err error
+		if sender, data, err = splitSender(data); err != nil {
+			return
+		}
+	}
 
 	// Synchronous, unlike receive: audio frames must reach the play-out buffer
 	// in the order they arrived, and one goroutine per frame would not promise
 	// that.
 	for _, sub := range subs {
-		sub.fn(data)
+		if sub.from != nil {
+			sub.from(data, sender)
+		} else {
+			sub.fn(data)
+		}
 	}
 }
 
@@ -455,6 +578,8 @@ func (c *Channel) receive(frame phxFrame) {
 		c.mu.Unlock()
 		if ch != nil {
 			ch <- frame.Payload
+		} else if strings.HasPrefix(ref, binaryRefPrefix) {
+			c.binaryRefused(frame.Payload)
 		}
 
 	default:
@@ -470,6 +595,42 @@ func (c *Channel) receive(frame phxFrame) {
 		for _, sub := range subs {
 			go sub.fn(frame.Payload)
 		}
+	}
+}
+
+// binaryRefused reports a refused binary frame as a "binary_error" event. They
+// used to vanish without a trace — lost audio, impossible to diagnose. The
+// server already answers at most once per reason per second; the same window
+// here keeps an older server, which answers every frame, from flooding the
+// application.
+func (c *Channel) binaryRefused(payload interface{}) {
+	var reply struct {
+		Status   string `json:"status"`
+		Response struct {
+			Reason string `json:"reason"`
+		} `json:"response"`
+	}
+	if err := MarshalPayload(payload, &reply); err != nil || reply.Status == "ok" {
+		return
+	}
+	reason := reply.Response.Reason
+	if reason == "" {
+		reason = "unknown"
+	}
+
+	now := time.Now()
+	c.mu.Lock()
+	if last, ok := c.binaryErrorAt[reason]; ok && now.Sub(last) < binaryErrorInterval {
+		c.mu.Unlock()
+		return
+	}
+	c.binaryErrorAt[reason] = now
+	subs := append([]eventSub{}, c.handlers["binary_error"]...)
+	c.mu.Unlock()
+
+	event := BinaryError{Topic: c.topic, Reason: reason}
+	for _, sub := range subs {
+		go sub.fn(event)
 	}
 }
 

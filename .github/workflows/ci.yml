@@ -29,6 +29,7 @@ jobs:
           restore-keys: mix-${{ runner.os }}-
 
       - run: mix deps.get
+      - run: mix format --check-formatted
       - run: mix compile --warnings-as-errors
       - run: mix test
 
@@ -70,6 +71,8 @@ jobs:
         with:
           go-version-file: konet-cli/go.mod
 
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
@@ -87,6 +90,8 @@ jobs:
         with:
           go-version-file: sdk/go/go.mod
 
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go build ./...
       - run: go vet ./...
       # -race because the client runs a read loop and a heartbeat loop against

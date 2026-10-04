@@ -11,17 +11,28 @@ defmodule Konet.Metrics do
 
   A monitor cannot drift: the socket process going away is the event, whether it
   left cleanly, crashed, or was killed.
+
+  Messages are counted **without this process**. `message_sent/0` runs on every
+  binary frame — fifty times a second per sender — and used to be a cast to
+  this one GenServer, the same single serialization point `KONET_LOG_BROADCASTS`
+  exists to avoid for `Konet.LogBuffer`. It is now an `:ets.update_counter/4`
+  on a table owned by `Konet.Tables`, with decentralized counters, so callers
+  never wait on each other or on a mailbox; the per-second rate is the
+  difference between two reads of that total.
   """
   use GenServer
+
+  @table :konet_metrics
 
   defstruct connections: 0,
             messages_total: 0,
             messages_rate: 0,
-            messages_current_window: 0,
             started_at: nil
 
   def start_link(_opts) do
-    GenServer.start_link(__MODULE__, %__MODULE__{started_at: DateTime.utc_now()}, name: __MODULE__)
+    GenServer.start_link(__MODULE__, %__MODULE__{started_at: DateTime.utc_now()},
+      name: __MODULE__
+    )
   end
 
   @doc """
@@ -32,13 +43,24 @@ defmodule Konet.Metrics do
   """
   def connection_opened(pid \\ self()), do: GenServer.cast(__MODULE__, {:connection_opened, pid})
 
-  def message_sent, do: GenServer.cast(__MODULE__, :message_sent)
+  def message_sent do
+    :ets.update_counter(@table, :messages_total, {2, 1}, {:messages_total, 0})
+    :ok
+  end
+
   def get, do: GenServer.call(__MODULE__, :get)
+
+  defp messages_total do
+    case :ets.lookup(@table, :messages_total) do
+      [{_, n}] -> n
+      [] -> 0
+    end
+  end
 
   @impl true
   def init(state) do
     :timer.send_interval(1_000, :compute_rate)
-    {:ok, %{metrics: state, monitors: %{}}}
+    {:ok, %{metrics: %{state | messages_total: messages_total()}, monitors: %{}}}
   end
 
   @impl true
@@ -56,25 +78,15 @@ defmodule Konet.Metrics do
   end
 
   @impl true
-  def handle_cast(:message_sent, %{metrics: metrics} = state) do
-    {:noreply,
-     %{
-       state
-       | metrics: %{
-           metrics
-           | messages_total: metrics.messages_total + 1,
-             messages_current_window: metrics.messages_current_window + 1
-         }
-     }}
-  end
-
-  @impl true
   def handle_call(:get, _from, %{metrics: metrics} = state) do
-    {:reply, metrics, state}
+    {:reply, %{metrics | messages_total: messages_total()}, state}
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, %{metrics: metrics, monitors: monitors} = state) do
+  def handle_info(
+        {:DOWN, _ref, :process, pid, _reason},
+        %{metrics: metrics, monitors: monitors} = state
+      ) do
     case Map.pop(monitors, pid) do
       {nil, _} ->
         {:noreply, state}
@@ -87,10 +99,12 @@ defmodule Konet.Metrics do
   end
 
   def handle_info(:compute_rate, %{metrics: metrics} = state) do
+    total = messages_total()
+
     new_metrics = %{
       metrics
-      | messages_rate: metrics.messages_current_window,
-        messages_current_window: 0
+      | messages_rate: max(0, total - metrics.messages_total),
+        messages_total: total
     }
 
     Phoenix.PubSub.broadcast(Konet.PubSub, "studio:metrics", {:metrics_update, new_metrics})
@@ -98,7 +112,8 @@ defmodule Konet.Metrics do
   end
 
   # Pushes the connection-count change to the Studio without touching the
-  # 1-second message window — flushing it here would corrupt the msg/s rate.
+  # message total: the rate is the difference between two :compute_rate reads,
+  # and advancing it here would corrupt the msg/s rate.
   defp broadcast_update(metrics) do
     Phoenix.PubSub.broadcast(Konet.PubSub, "studio:metrics", {:metrics_update, metrics})
   end

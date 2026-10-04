@@ -47,7 +47,12 @@ declaring the socket dead. Keep it below the server's socket timeout (45s).
 
 The client reconnects with exponential backoff and **re-joins every channel you
 subscribed to**, so a dropped connection is transparent to your code. A channel
-you left with `unsubscribe()` is never re-joined.
+you left with `unsubscribe()` is never re-joined. Delays are jittered so clients
+dropped together do not reconnect in lockstep.
+
+`client.onStatus((status) => …)` reports `connecting`, `connected`,
+`reconnecting` (with `attempt` and `delayMs`), `disconnected` and `failed` (the
+reconnect attempts are used up). It returns a function that removes the handler.
 
 While disconnected, `send()` throws instead of writing into a socket the server
 no longer associates with your topic — a failed send is always visible.

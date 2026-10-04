@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { KonetClient } from "../client.js";
+import { KonetClient, reconnectDelay } from "../client.js";
+import type { ConnectionStatus } from "../client.js";
 import type { KonetSendError } from "../channel.js";
 import { MockWebSocket, replyTo, WireFrame } from "./mock-socket.js";
 
@@ -331,6 +332,224 @@ describe("presence", () => {
 
     expect(channel.getPresence().list().map((e) => e.id)).toEqual(["bob"]);
 
+    client.disconnect();
+  });
+});
+
+describe("binary mode", () => {
+  it("leaves the join payload empty by default and reads an old server as exclusive", async () => {
+    const { channel, join } = await connectAndJoin();
+
+    // Unchanged on the wire for every existing push-to-talk client.
+    expect(join[4]).toEqual({});
+    // A server older than the mode replies `{}`; it only ever did exclusive.
+    expect(channel.binaryMode).toBe("exclusive");
+  });
+
+  it("asks for multiplex on every join, reconnects included", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    client.connect();
+    const socket = MockWebSocket.last();
+    const channel = client.channel("room:call-1", { binaryMode: "multiplex" });
+    const joined = channel.subscribe();
+
+    socket.open();
+    const join = socket.lastFrameOf("phx_join")!;
+    expect(join[4]).toEqual({ binary_mode: "multiplex" });
+    replyTo(socket, join, "ok", { binary_mode: "multiplex" });
+    await joined;
+    expect(channel.binaryMode).toBe("multiplex");
+
+    // The server forgets a topic's mode once it empties, so a rejoin that
+    // dropped the parameter would come back exclusive — or be refused.
+    socket.drop();
+    expect(channel.binaryMode).toBeNull();
+    await vi.advanceTimersByTimeAsync(1_000);
+    const socket2 = MockWebSocket.last();
+    socket2.open();
+    expect(socket2.lastFrameOf("phx_join")![4]).toEqual({ binary_mode: "multiplex" });
+
+    client.disconnect();
+  });
+
+  it("surfaces a mode mismatch as a refused join", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    client.connect();
+    const socket = MockWebSocket.last();
+    const joined = client.channel("room:walkie").subscribe();
+    socket.open();
+
+    replyTo(socket, socket.lastFrameOf("phx_join")!, "error", {
+      reason: "binary_mode_mismatch",
+      binary_mode: "multiplex",
+    });
+    await expect(joined).rejects.toThrow(/binary_mode_mismatch/);
+  });
+
+  it("hands a multiplex frame to its handler with the sender split off", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    client.connect();
+    const socket = MockWebSocket.last();
+    const channel = client.channel("room:call-3", { binaryMode: "multiplex" });
+    const joined = channel.subscribe();
+    socket.open();
+    replyTo(socket, socket.lastFrameOf("phx_join")!, "ok", { binary_mode: "multiplex" });
+    await joined;
+
+    const heard: Array<[number[], string | undefined]> = [];
+    channel.on("a", (data, sender) => heard.push([Array.from(data as Uint8Array), sender]));
+
+    const stamped = (id: string, ...data: number[]) => {
+      const bytes = new TextEncoder().encode(id);
+      return new Uint8Array([bytes.length, ...bytes, ...data]);
+    };
+    socket.serverBroadcastBinary("room:call-3", "a", stamped("alice", 1, 2));
+    socket.serverBroadcastBinary("room:call-3", "a", stamped("bob", 1, 2));
+    // Too short for its own prefix: dropped, not delivered half-parsed.
+    socket.serverBroadcastBinary("room:call-3", "a", new Uint8Array([9]));
+
+    expect(heard).toEqual([
+      [[1, 2], "alice"],
+      [[1, 2], "bob"],
+    ]);
+    client.disconnect();
+  });
+
+  it("leaves an exclusive frame untouched, with no sender", async () => {
+    const { client, socket, channel } = await connectAndJoin();
+
+    const heard: Array<[number[], string | undefined]> = [];
+    channel.on("a", (data, sender) => heard.push([Array.from(data as Uint8Array), sender]));
+    socket.serverBroadcastBinary(TOPIC, "a", new Uint8Array([5, 1, 2]));
+
+    // The leading 5 is data here, not a length: exclusive frames have no prefix.
+    expect(heard).toEqual([[[5, 1, 2], undefined]]);
+    client.disconnect();
+  });
+
+  it("refuses to hand back an existing channel under a different mode", () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    const channel = client.channel("room:call-2", { binaryMode: "multiplex" });
+
+    expect(client.channel("room:call-2")).toBe(channel);
+    expect(client.channel("room:call-2", { binaryMode: "multiplex" })).toBe(channel);
+    expect(() => client.channel("room:call-2", { binaryMode: "exclusive" })).toThrow(/multiplex/);
+  });
+});
+
+describe("reconnect backoff", () => {
+  it("keeps half of each step fixed and jitters the other half", () => {
+    // Without jitter every client dropped by a restart came back in lockstep.
+    expect(reconnectDelay(1_000, 0, () => 0)).toBe(500);
+    expect(reconnectDelay(1_000, 0, () => 1)).toBe(1_000);
+    expect(reconnectDelay(1_000, 2, () => 0.5)).toBe(3_000);
+  });
+
+  it("never exceeds the 30 s ceiling", () => {
+    expect(reconnectDelay(1_000, 20, () => 1)).toBe(30_000);
+    expect(reconnectDelay(1_000, 20, () => 0)).toBe(15_000);
+  });
+
+  it("spreads clients that dropped at the same moment", () => {
+    const delays = new Set(Array.from({ length: 20 }, () => reconnectDelay(1_000, 3)));
+    expect(delays.size).toBeGreaterThan(1);
+  });
+});
+
+describe("connection status", () => {
+  it("reports each step, including giving up", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", {
+      token: "kt_test",
+      maxReconnectAttempts: 1,
+    });
+    const seen: ConnectionStatus[] = [];
+    client.onStatus((status) => seen.push(status));
+
+    client.connect();
+    MockWebSocket.last().open();
+    MockWebSocket.last().drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    MockWebSocket.last().drop(); // the only retry fails too
+
+    expect(seen.map((s) => s.state)).toEqual([
+      "connecting",
+      "connected",
+      "reconnecting",
+      "connecting",
+      "failed",
+    ]);
+    const retry = seen[2] as Extract<ConnectionStatus, { state: "reconnecting" }>;
+    expect(retry.attempt).toBe(1);
+    expect(retry.delayMs).toBeGreaterThanOrEqual(500);
+    expect(retry.delayMs).toBeLessThanOrEqual(1_000);
+  });
+
+  it("reports an explicit disconnect, once, and stops reporting when removed", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    const seen: string[] = [];
+    const off = client.onStatus((status) => seen.push(status.state));
+
+    client.connect();
+    MockWebSocket.last().open();
+    client.disconnect();
+    client.disconnect();
+    expect(seen).toEqual(["connecting", "connected", "disconnected"]);
+
+    off();
+    client.connect();
+    expect(seen).toHaveLength(3);
+    client.disconnect();
+  });
+
+  it("does not let a failing handler break the connection", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    client.onStatus(() => {
+      throw new Error("ui bug");
+    });
+
+    client.connect();
+    MockWebSocket.last().open();
+    expect(client.connected).toBe(true);
+    client.disconnect();
+  });
+});
+
+describe("binary refusals", () => {
+  // Binary pushes carry no tracked ref, so a refusal used to be dropped
+  // silently: lost audio with no way to know why.
+  it("sends binary frames with a recognisable ref", async () => {
+    const { client, socket, channel } = await connectAndJoin();
+    channel.sendBinary("a", new Uint8Array([1]));
+
+    const bytes = new Uint8Array(socket.sentBinary[0]!);
+    const ref = new TextDecoder().decode(bytes.subarray(5 + bytes[1]!, 5 + bytes[1]! + bytes[2]!));
+    expect(ref.startsWith("b")).toBe(true);
+    client.disconnect();
+  });
+
+  it("reports a refusal as binary_error, once per reason per second", async () => {
+    const { client, socket, channel } = await connectAndJoin();
+    const errors: unknown[] = [];
+    channel.on("binary_error", (e) => errors.push(e));
+
+    const refuse = (ref: string, reason: string) =>
+      socket.serverSend([null, ref, TOPIC, "phx_reply", { status: "error", response: { reason } }]);
+
+    refuse("b10", "floor_required");
+    refuse("b11", "floor_required"); // same second: folded into the first
+    refuse("b12", "rate_limited"); // another reason: reported
+    expect(errors).toEqual([
+      { topic: TOPIC, reason: "floor_required" },
+      { topic: TOPIC, reason: "rate_limited" },
+    ]);
+
+    vi.advanceTimersByTime(1_000);
+    refuse("b13", "floor_required");
+    expect(errors).toHaveLength(3);
+
+    // A late reply to a text send is not a binary refusal.
+    socket.serverSend([null, "14", TOPIC, "phx_reply", { status: "error", response: { reason: "x" } }]);
+    expect(errors).toHaveLength(3);
     client.disconnect();
   });
 });

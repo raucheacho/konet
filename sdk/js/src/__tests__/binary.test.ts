@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { BROADCAST, decodeServerFrame, encodePush, PUSH, REPLY } from "../binary.js";
+import { BROADCAST, decodeServerFrame, encodePush, PUSH, REPLY, splitSender } from "../binary.js";
 
 /**
  * Le cadrage binaire de Phoenix v2.
@@ -100,5 +100,35 @@ describe("decodeServerFrame", () => {
     // yields nonsense rather than an error, so nothing must ever do it.
     const frame = decodeServerFrame(encodePush("3", "44", "room:x", "a", new Uint8Array([1])))!;
     expect(frame.topic).not.toBe("room:x");
+  });
+});
+
+describe("splitSender", () => {
+  it("lit l'émetteur préfixé par le serveur en multiplex", () => {
+    // sender_size | sender | data
+    const bytes = new Uint8Array([5, ...new TextEncoder().encode("alice"), 0xaa, 0xbb]);
+    const frame = splitSender(bytes)!;
+
+    expect(frame.sender).toBe("alice");
+    expect(Array.from(frame.data)).toEqual([0xaa, 0xbb]);
+  });
+
+  it("compte les octets et non les caractères", () => {
+    const id = new TextEncoder().encode("zoé"); // 4 bytes, 3 characters
+    const frame = splitSender(new Uint8Array([id.length, ...id, 7]))!;
+
+    expect(frame.sender).toBe("zoé");
+    expect(Array.from(frame.data)).toEqual([7]);
+  });
+
+  it("accepte une trame vide après l'émetteur", () => {
+    const frame = splitSender(new Uint8Array([1, 0x62]))!;
+    expect(frame.sender).toBe("b");
+    expect(frame.data.length).toBe(0);
+  });
+
+  it("rend null sur un préfixe tronqué plutôt que de lever", () => {
+    expect(splitSender(new Uint8Array([]))).toBeNull();
+    expect(splitSender(new Uint8Array([9, 0x61]))).toBeNull();
   });
 });

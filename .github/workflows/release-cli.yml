@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
   packages: write
+  # Build provenance: lets anyone check that an archive was built by this
+  # workflow from this repository (`gh attestation verify`). Releases used to
+  # carry nothing but a checksums file published next to them.
+  id-token: write
+  attestations: write
 
 jobs:
   goreleaser:
@@ -32,3 +37,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            konet-cli/dist/*.tar.gz
+            konet-cli/dist/*.zip
+            konet-cli/dist/*_checksums.txt

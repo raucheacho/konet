@@ -9,6 +9,9 @@ konet-cli/konet
 konet-cli/*.exe
 konet-cli/konet.config.toml
 sdk/go/*.test
+# `go build` in conformance/go names the binary after the module directory.
+# One 8.6 MB arm64 build of it was committed by accident.
+conformance/go/go
 bin/
 dist/
 

@@ -69,6 +69,7 @@ defmodule Konet.FloorTest do
     end
 
     :sys.get_state(Floor)
+
     assert monitor_count() == {refs_before, topics_before},
            "one monitor per press was left behind on the holder's pid"
   end
@@ -117,5 +118,57 @@ defmodule Konet.FloorTest do
     :sys.get_state(Floor)
 
     assert Floor.holder(topic) == nil
+  end
+
+  # Before, only an explicit release and the channel's terminate/2 announced a
+  # free floor: a swept or vanished holder kept showing as talking to every
+  # listener until someone else pressed.
+  describe "releases decided by the arbiter are announced" do
+    test "an expired hold" do
+      topic = "room:floor-announce-expired"
+      KonetWeb.Endpoint.subscribe(topic)
+
+      assert {:ok, "alice", _} = Floor.acquire(topic, "alice")
+      Application.put_env(:konet, :floor_max_hold_ms, 0)
+      send(Floor, :sweep)
+      :sys.get_state(Floor)
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        event: "konet:floor",
+        payload: %{holder: nil, since: since}
+      }
+
+      assert is_integer(since)
+    end
+
+    test "a holder that died without releasing" do
+      topic = "room:floor-announce-dead"
+      KonetWeb.Endpoint.subscribe(topic)
+
+      holder = spawn(fn -> Process.sleep(:infinity) end)
+      assert {:ok, "bob", _} = Floor.acquire(topic, "bob", holder)
+
+      ref = Process.monitor(holder)
+      Process.exit(holder, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^holder, _}, 1000
+      :sys.get_state(Floor)
+      :sys.get_state(Floor)
+
+      assert_receive %Phoenix.Socket.Broadcast{event: "konet:floor", payload: %{holder: nil}}
+    end
+
+    test "but not a floor already released, which its releaser announced" do
+      topic = "room:floor-announce-once"
+      KonetWeb.Endpoint.subscribe(topic)
+
+      holder = spawn(fn -> Process.sleep(:infinity) end)
+      assert {:ok, "carol", _} = Floor.acquire(topic, "carol", holder)
+      assert :ok = Floor.release(topic, "carol")
+      Process.exit(holder, :kill)
+      :sys.get_state(Floor)
+      :sys.get_state(Floor)
+
+      refute_receive %Phoenix.Socket.Broadcast{event: "konet:floor"}, 200
+    end
   end
 end

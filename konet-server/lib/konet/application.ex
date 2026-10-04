@@ -13,9 +13,13 @@ defmodule Konet.Application do
       Konet.ChannelRegistry,
       Konet.RateLimiter,
       Konet.Floor,
+      Konet.BinaryMode,
       Konet.LogBuffer,
       Konet.History,
-      {Task.Supervisor, name: Konet.TaskSupervisor},
+      # Webhook deliveries get their own bounded pool, and the process that
+      # schedules their retries.
+      Konet.Webhooks.pool_spec(),
+      Konet.Webhooks,
       KonetWeb.Telemetry,
       KonetWeb.Endpoint
     ]
@@ -34,7 +38,27 @@ defmodule Konet.Application do
       max_seconds: 10
     ]
 
-    Supervisor.start_link(children, opts)
+    with {:ok, pid} <- Supervisor.start_link(children, opts) do
+      warn_if_studio_is_open()
+      {:ok, pid}
+    end
+  end
+
+  # The documentation says to set KONET_STUDIO_PASSWORD on anything reachable,
+  # but nothing said so at runtime: a server deployed without it serves the
+  # Studio to the world, silently. Only when the endpoint really listens, so
+  # the test suite stays quiet.
+  defp warn_if_studio_is_open do
+    if Phoenix.Endpoint.server?(:konet, KonetWeb.Endpoint) and
+         not Konet.Auth.studio_auth_enabled?() do
+      require Logger
+
+      Logger.warning(
+        "konet: KONET_STUDIO_PASSWORD is not set — /studio is open to anyone who can " <>
+          "reach this server (channels, presence, broadcast). Keys are hidden and " <>
+          "rotation is disabled until it is set."
+      )
+    end
   end
 
   @impl true

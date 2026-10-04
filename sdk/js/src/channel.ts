@@ -1,8 +1,49 @@
+import { splitSender } from "./binary.js";
 import { Presence, PresenceMap } from "./presence.js";
 
 export type ChannelState = "idle" | "joining" | "joined" | "errored" | "leaving";
 
-type EventHandler = (payload: unknown) => void;
+/**
+ * How binary frames are shared on a topic.
+ *
+ * - `"exclusive"`: one sender at a time, arbitrated by the floor
+ *   (`acquireFloor()`). Half-duplex: push-to-talk, a radio net.
+ * - `"multiplex"`: every member sends whenever it likes. There is no floor at
+ *   all. Full-duplex: a call.
+ */
+export type BinaryMode = "exclusive" | "multiplex";
+
+export interface ChannelOptions {
+  /**
+   * Defaults to `"exclusive"`. The mode belongs to the topic, not to one
+   * member: a join asking for a different mode from the members already there
+   * is refused with `binary_mode_mismatch`, so every member of a topic must
+   * ask for the same one.
+   */
+  binaryMode?: BinaryMode;
+}
+
+/**
+ * `sender` is only set for a binary frame on a `"multiplex"` topic: the user id
+ * of the member who sent it, as stamped by the server.
+ */
+type EventHandler = (payload: unknown, sender?: string) => void;
+
+/**
+ * Why the server refused binary frames, delivered as the channel's
+ * `"binary_error"` event — at most once per reason per second.
+ */
+export interface KonetBinaryError {
+  topic: string;
+  /** `"floor_required"` (exclusive topic, floor not held) or `"rate_limited"`. */
+  reason: string;
+}
+
+// Binary pushes carry refs with this prefix, so a refusal can be recognised
+// without remembering anything per frame.
+const BINARY_REF_PREFIX = "b";
+// Refusals of the same reason closer together than this are reported once.
+const BINARY_ERROR_INTERVAL_MS = 1_000;
 
 /** Why the server refused a `send()`. */
 export interface KonetSendError {
@@ -48,6 +89,8 @@ export class Channel {
   ) => void;
   private nextRef: () => string;
   private isOpen: () => boolean;
+  private requestedBinaryMode: BinaryMode | undefined;
+  private confirmedBinaryMode: BinaryMode | null = null;
 
   // Whether the application wants this channel joined. Survives socket drops,
   // so a reconnect knows what to restore; cleared only by unsubscribe(), so a
@@ -55,6 +98,7 @@ export class Channel {
   private wantsJoin = false;
   private joinWaiters: JoinWaiter[] = [];
   private pendingSends: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private binaryErrorAt: Map<string, number> = new Map();
 
   constructor(
     topic: string,
@@ -67,13 +111,29 @@ export class Channel {
       data: Uint8Array
     ) => void,
     nextRef: () => string,
-    isOpen: () => boolean
+    isOpen: () => boolean,
+    options: ChannelOptions = {}
   ) {
     this.topic = topic;
     this.sendFn = sendFn;
     this.sendBinaryFn = sendBinaryFn;
     this.nextRef = nextRef;
     this.isOpen = isOpen;
+    this.requestedBinaryMode = options.binaryMode;
+  }
+
+  /** The mode asked for at creation; undefined means the server default. */
+  get requestedMode(): BinaryMode | undefined {
+    return this.requestedBinaryMode;
+  }
+
+  /**
+   * The binary mode the server confirmed for this topic, or null until the
+   * channel is joined. A server older than the mode reports nothing and is
+   * read as `"exclusive"`, which is what it always did.
+   */
+  get binaryMode(): BinaryMode | null {
+    return this.confirmedBinaryMode;
   }
 
   /**
@@ -160,8 +220,14 @@ export class Channel {
    *
    * Different from `send()` in three ways that all follow from the rate:
    * Phoenix frames it natively instead of base64 inside JSON, the server never
-   * acknowledges it, and it is refused unless this client holds the channel's
-   * floor. Take the floor with `acquireFloor()` first.
+   * acknowledges it, and in `"exclusive"` mode it is refused unless this
+   * client holds the channel's floor — take it with `acquireFloor()` first.
+   * In `"multiplex"` mode any member may send at any time, and receivers get
+   * each frame with its sender as the handler's second argument:
+   * `channel.on("a", (data, sender) => …)`.
+   *
+   * A refused frame is reported as a `"binary_error"` event on the channel
+   * (`{ topic, reason }`), at most once per reason per second.
    *
    * `data` is copied into the frame, so the caller may reuse its buffer
    * immediately — which the audio path does, every 20 ms.
@@ -171,8 +237,15 @@ export class Channel {
       throw new Error(`Channel ${this.topic} is not joined`);
     }
     // Not tracked like send(): at fifty frames a second a reply tracker per
-    // frame would cost more than the frames do.
-    this.sendBinaryFn(this.joinRef!, this.nextRef(), this.topic, event, data);
+    // frame would cost more than the frames do. The ref's prefix is enough to
+    // recognise a refusal when one comes back; see "binary_error".
+    this.sendBinaryFn(
+      this.joinRef!,
+      BINARY_REF_PREFIX + this.nextRef(),
+      this.topic,
+      event,
+      data
+    );
   }
 
   /**
@@ -180,7 +253,9 @@ export class Channel {
    * time, so this is how half-duplex media — push-to-talk — is arbitrated.
    *
    * Resolves with the holder, which is this client on success. Rejects when
-   * someone else already holds it, naming them so the UI can say who.
+   * someone else already holds it, naming them so the UI can say who. Only in
+   * `"exclusive"` mode: a `"multiplex"` topic has no floor, and the server
+   * refuses with `floor_disabled`.
    */
   acquireFloor(): Promise<string> {
     return this.request("konet:floor_acquire").then(
@@ -223,7 +298,17 @@ export class Channel {
 
   /** @internal a binary frame arrived for this topic */
   _receiveBinary(event: string, data: Uint8Array): void {
-    this.emit(event, data);
+    // Several members send at once on a multiplex topic, so the server puts the
+    // sender in front of every frame; without it the streams could not be told
+    // apart. Keyed on the *confirmed* mode: a server older than modes accepts
+    // the join, stays exclusive, and stamps nothing.
+    if (this.confirmedBinaryMode !== "multiplex") {
+      this.emit(event, data);
+      return;
+    }
+    const frame = splitSender(data);
+    if (frame === null) return;
+    this.emit(event, frame.data, frame.sender);
   }
 
   /** @internal called by KonetClient when a message arrives for this topic */
@@ -234,6 +319,9 @@ export class Channel {
         const list = this.handlers.get(`phx_reply:${msg.ref}`) ?? [];
         list.forEach((h) => h(resp));
         this.handlers.delete(`phx_reply:${msg.ref}`);
+        if (list.length === 0 && msg.ref?.startsWith(BINARY_REF_PREFIX)) {
+          this.binaryRefused(resp);
+        }
         break;
       }
 
@@ -272,6 +360,7 @@ export class Channel {
   _socketClosed(): void {
     if (this.state === "joined" || this.state === "joining") this.state = "idle";
     this.joinRef = null;
+    this.confirmedBinaryMode = null;
 
     // Konet only replies to a broadcast it refused, so an in-flight send whose
     // socket died is indistinguishable from one that was accepted. Drop the
@@ -290,6 +379,8 @@ export class Channel {
 
       if (response.status === "ok") {
         this.state = "joined";
+        const reply = response.response as { binary_mode?: BinaryMode } | null;
+        this.confirmedBinaryMode = reply?.binary_mode ?? "exclusive";
         this.resolveJoinWaiters();
       } else {
         this.state = "errored";
@@ -303,13 +394,33 @@ export class Channel {
       }
     });
 
+    // Sent on every join, reconnects included: the server forgets a topic's
+    // mode once it empties, so a rejoin that dropped it would come back as
+    // whatever the server defaults to.
     this.sendFn({
       joinRef: ref,
       ref,
       topic: this.topic,
       event: "phx_join",
-      payload: {},
+      payload: this.requestedBinaryMode ? { binary_mode: this.requestedBinaryMode } : {},
     });
+  }
+
+  /**
+   * A binary frame was refused. They used to vanish without a trace — lost
+   * audio, impossible to diagnose. The server already answers at most once per
+   * reason per second; the same window here keeps an older server, which
+   * answers every frame, from flooding the application.
+   */
+  private binaryRefused(resp: { status: string; response: unknown }): void {
+    if (resp.status === "ok") return;
+    const reason = (resp.response as { reason?: string } | null)?.reason ?? "unknown";
+    const now = Date.now();
+    const last = this.binaryErrorAt.get(reason);
+    if (last !== undefined && now - last < BINARY_ERROR_INTERVAL_MS) return;
+    this.binaryErrorAt.set(reason, now);
+    const error: KonetBinaryError = { topic: this.topic, reason };
+    this.emit("binary_error", error);
   }
 
   private trackSend(
@@ -366,7 +477,7 @@ export class Channel {
     this.handlers.set(key, [handler as EventHandler]);
   }
 
-  private emit(event: string, payload: unknown): void {
-    (this.handlers.get(event) ?? []).forEach((h) => h(payload));
+  private emit(event: string, payload: unknown, sender?: string): void {
+    (this.handlers.get(event) ?? []).forEach((h) => h(payload, sender));
   }
 }

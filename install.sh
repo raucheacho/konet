@@ -4,7 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/raucheacho/konet/main/install.sh | sh
 #
 # Downloads the latest release archive for this platform, verifies it against
-# the published checksums file, and installs the `konet` binary.
+# the published checksums file — refusing to install when it cannot — and
+# installs the `konet` binary.
 #
 # `konet upgrade` fetches and runs this script, which is why it must stay
 # POSIX sh and must not depend on anything outside coreutils + curl/wget.
@@ -17,6 +18,9 @@
 #                       /usr/local/bin, which on Intel macOS is Homebrew's own
 #                       prefix)
 #   KONET_VERSION       version to install, e.g. v0.3.0 (default: latest)
+#   KONET_SKIP_CHECKSUM set to 1 to install without verifying the archive. Only
+#                       for a release that genuinely has no checksums file; an
+#                       unverifiable download is otherwise refused.
 
 set -eu
 
@@ -122,6 +126,18 @@ install_dir() {
 }
 
 # ── Checksum verification ───────────────────────────────────────────────────
+# Every case where the archive cannot be verified is fatal, not a warning: a
+# missing checksums file or entry is exactly what a tampered release would look
+# like, and this script installs a binary the user then runs. They used to warn
+# and install anyway. KONET_SKIP_CHECKSUM=1 is the explicit way out.
+unverified() {
+    if [ "${KONET_SKIP_CHECKSUM:-}" = "1" ]; then
+        warn "warning: $1; installing unverified because KONET_SKIP_CHECKSUM=1"
+        return 0
+    fi
+    fatal "$1 — refusing to install an unverified binary (set KONET_SKIP_CHECKSUM=1 to override)"
+}
+
 # POSIX sh has no function-local variables, so every name in here is prefixed:
 # plain `archive=` would overwrite the caller's, which is exactly the bug that
 # made tar look for "$tmp/$tmp/konet_....tar.gz".
@@ -132,7 +148,7 @@ verify_checksum() {
 
     _vc_expected="$(grep " $_vc_name\$" "$_vc_checksums" 2>/dev/null | awk '{print $1}' || true)"
     if [ -z "$_vc_expected" ]; then
-        warn "warning: $_vc_name is not listed in the checksums file; skipping verification"
+        unverified "$_vc_name is not listed in the checksums file"
         return 0
     fi
 
@@ -141,7 +157,7 @@ verify_checksum() {
     elif command -v shasum >/dev/null 2>&1; then
         _vc_actual="$(shasum -a 256 "$_vc_archive" | awk '{print $1}')"
     else
-        warn "warning: no sha256 tool available; skipping verification"
+        unverified "no sha256 tool (sha256sum or shasum) is available"
         return 0
     fi
 
@@ -177,7 +193,7 @@ main() {
     if fetch "$base/${BINARY}_${bare_version}_checksums.txt" "$tmp/checksums.txt" 2>/dev/null; then
         verify_checksum "$tmp/$archive" "$tmp/checksums.txt"
     else
-        warn "warning: checksums file unavailable; skipping verification"
+        unverified "the checksums file could not be downloaded"
     fi
 
     tar -xzf "$tmp/$archive" -C "$tmp" || fatal "could not extract $archive"

@@ -49,7 +49,21 @@ declaring the socket dead. Keep it below the server's socket timeout (45s).
 
 The client reconnects with exponential backoff and re-joins every channel you
 subscribed to, so a dropped connection is transparent to your code. A channel
-you left with `unsubscribe()` is never re-joined.
+you left with `unsubscribe()` is never re-joined. Each delay is jittered (between
+half and all of the step) so that clients dropped together do not all come back
+at the same instant.
+
+To show the connection state, or learn that the client gave up:
+
+```ts
+const off = client.onStatus((status) => {
+  // status.state: 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed'
+  // 'reconnecting' also carries status.attempt and status.delayMs
+})
+```
+
+`failed` means `maxReconnectAttempts` were used up; nothing more is tried until
+`connect()` or `checkConnection()`.
 
 While disconnected, `send()` throws rather than writing into a socket the
 server no longer associates with your topic. After a re-join the server replays
@@ -154,6 +168,27 @@ try {
 
 `sendBinary` copies its argument, so a caller may reuse one buffer for every
 frame — which an audio path does, every 20 ms.
+
+A refused frame — no floor, or over the rate limit — is reported on the channel,
+at most once per reason per second:
+
+```ts
+channel.on('binary_error', (error) => {
+  const { reason } = error as KonetBinaryError // 'floor_required' | 'rate_limited'
+})
+```
+
+For a call, where both sides send at once, join in `multiplex` mode: there is no
+floor to take, and every member must ask for the same mode.
+
+```ts
+const call = client.channel('room:call-7', { binaryMode: 'multiplex' })
+await call.subscribe()
+call.on('a', (data: Uint8Array, sender?: string) => {
+  // sender: the user id of the member who sent this frame
+})
+call.sendBinary('a', frame)
+```
 
 Unlike `send()`, binary frames are never buffered across a reconnect. Replaying
 audio recorded seconds ago into a live channel is worse than losing it.

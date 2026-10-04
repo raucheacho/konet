@@ -10,7 +10,7 @@ wire format is the one thing every client has to agree on independently.
 
 import pytest
 
-from konet.binary import BROADCAST, PUSH, REPLY, decode_server_frame, encode_push
+from konet.binary import BROADCAST, PUSH, REPLY, decode_server_frame, encode_push, split_sender
 
 
 class TestEncodePush:
@@ -91,3 +91,93 @@ class TestDecodeServerFrame:
         # ref field. Feeding it here yields nonsense rather than an error.
         frame = decode_server_frame(encode_push("3", "44", "room:x", "a", bytes([1])))
         assert frame.topic != "room:x"
+
+
+class TestSplitSender:
+    def test_reads_the_sender_the_server_put_in_front(self):
+        # sender_size | sender | data
+        assert split_sender(bytes([5]) + b"alice" + bytes([0xAA, 0xBB])) == ("alice", bytes([0xAA, 0xBB]))
+
+    def test_counts_bytes_not_characters(self):
+        sender_id = "zoé".encode()  # 4 bytes, 3 characters
+        assert split_sender(bytes([len(sender_id)]) + sender_id + bytes([7])) == ("zoé", bytes([7]))
+
+    def test_returns_none_on_a_truncated_prefix(self):
+        assert split_sender(b"") is None
+        assert split_sender(bytes([9]) + b"a") is None
+
+
+def _channel(mode):
+    from konet.channel import Channel
+
+    channel = Channel("room:t", None, None, lambda: "1", mode)
+    channel._binary_mode = mode  # as after a join the server confirmed
+    return channel
+
+
+def test_multiplex_frames_carry_their_sender():
+    channel = _channel("multiplex")
+    heard, plain = [], []
+    channel.on_binary_from("a", lambda data, sender: heard.append((data, sender)))
+    channel.on_binary("a", plain.append)
+
+    channel._receive_binary("a", bytes([5]) + b"alice" + b"x")
+    channel._receive_binary("a", bytes([3]) + b"bob" + b"x")
+    # Too short for its own prefix: dropped, not delivered half-parsed.
+    channel._receive_binary("a", bytes([9]))
+
+    assert heard == [(b"x", "alice"), (b"x", "bob")]
+    # A sender-less handler still gets the data, prefix removed.
+    assert plain == [b"x", b"x"]
+
+
+def test_exclusive_frames_are_left_untouched():
+    channel = _channel("exclusive")
+    heard = []
+    channel.on_binary_from("a", lambda data, sender: heard.append((data, sender)))
+
+    channel._receive_binary("a", bytes([5, 1, 2]))
+
+    # The leading 5 is data here, not a length: exclusive frames have no prefix.
+    assert heard == [(bytes([5, 1, 2]), "")]
+
+
+def _refusal(ref, reason):
+    return [None, ref, "room:t", "phx_reply", {"status": "error", "response": {"reason": reason}}]
+
+
+def test_binary_frames_carry_a_recognisable_ref():
+    import asyncio
+    from konet.channel import Channel
+
+    sent = []
+
+    async def send_binary(join_ref, ref, topic, event, data):
+        sent.append(ref)
+
+    channel = Channel("room:t", None, send_binary, lambda: "7")
+    channel._state = "joined"
+    asyncio.run(channel.send_binary("a", b"x"))
+    assert sent == ["b7"]
+
+
+def test_binary_refusals_are_reported_once_per_reason_per_second():
+    from konet.channel import Channel
+
+    channel = Channel("room:t", None, None, lambda: "1")
+    errors = []
+    channel.on("binary_error", errors.append)
+
+    channel._receive(_refusal("b1", "floor_required"))
+    channel._receive(_refusal("b2", "floor_required"))  # same second: folded
+    channel._receive(_refusal("b3", "rate_limited"))  # another reason
+    channel._receive(_refusal("4", "whatever"))  # not a binary ref: ignored
+
+    assert errors == [
+        {"topic": "room:t", "reason": "floor_required"},
+        {"topic": "room:t", "reason": "rate_limited"},
+    ]
+
+    channel._binary_error_at["floor_required"] -= 2.0  # the second has passed
+    channel._receive(_refusal("b5", "floor_required"))
+    assert len(errors) == 3

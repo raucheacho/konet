@@ -142,24 +142,21 @@ async function main() {
   offA();
   check(10, "binary does not echo to sender", binOnA === false, "sender received its own audio");
 
-  // 11 — a client without the floor is refused
-  const refusal = new Promise((resolve) => {
-    const off = chB.on("send_error", (e) => {
-      off();
-      resolve(e);
-    });
-    setTimeout(() => resolve(null), 2000);
-  });
+  // 11/21 — a client without the floor is refused, is told so, and the
+  // channel survives it
+  const refusal = next(chB, "binary_error", 2000);
   chB.sendBinary("audio", bytes);
   const refused = await refusal;
-  // The server replies with a binary error frame, which the SDK does not route
-  // to send_error; absence of delivery to A is the observable part.
   check(
-    11,
-    "binary without the floor is refused",
-    refused === null || /floor_required/.test(JSON.stringify(refused)),
+    21,
+    "a refused binary frame is reported",
+    refused?.reason === "floor_required" && refused?.topic === ROOM,
     JSON.stringify(refused)
   );
+
+  const surviving11 = next(chB, "conf:after-refusal", 3000);
+  chA.send("conf:after-refusal", { ok: true });
+  check(11, "channel survives a refused binary frame", (await surviving11)?.ok === true, "no traffic after the refusal");
 
   // 12 — release, then B can take it
   try {
@@ -218,6 +215,85 @@ async function main() {
   } catch (err) {
     fail(14, "channel survives bad input", err.message);
   }
+
+  // 16–19 — multiplex: both send at once, no floor, the mode is the topic's
+  const CALL = `${ROOM}-call`;
+  const callA = a.channel(CALL, { binaryMode: "multiplex" });
+  const callB = b.channel(CALL, { binaryMode: "multiplex" });
+  try {
+    await callA.subscribe();
+    await callB.subscribe();
+    check(
+      16,
+      "multiplex join is confirmed",
+      callA.binaryMode === "multiplex" && callB.binaryMode === "multiplex",
+      `A=${callA.binaryMode} B=${callB.binaryMode}`
+    );
+  } catch (err) {
+    fail(16, "multiplex join is confirmed", err.message);
+  }
+
+  const FRAMES = 10;
+  const heard = { A: [], B: [] };
+  const senders = { A: new Set(), B: new Set() };
+  callA.on("voice", (data, sender) => {
+    heard.A.push([...data]);
+    senders.A.add(sender);
+  });
+  callB.on("voice", (data, sender) => {
+    heard.B.push([...data]);
+    senders.B.add(sender);
+  });
+  // Interleaved, with neither side taking anything first.
+  for (let n = 0; n < FRAMES; n++) {
+    callA.sendBinary("voice", new Uint8Array([0xa, n]));
+    callB.sendBinary("voice", new Uint8Array([0xb, n]));
+  }
+  await sleep(500);
+  const stream = (tag) => Array.from({ length: FRAMES }, (_, n) => [tag, n]);
+  check(
+    17,
+    "two simultaneous streams both relayed",
+    JSON.stringify(heard.A) === JSON.stringify(stream(0xb)) &&
+      JSON.stringify(heard.B) === JSON.stringify(stream(0xa)),
+    `A heard ${JSON.stringify(heard.A)}, B heard ${JSON.stringify(heard.B)}`
+  );
+
+  // 20 — each frame names its sender: one id per stream, and not the same one
+  const [fromB] = senders.A;
+  const [fromA] = senders.B;
+  check(
+    20,
+    "multiplex frames carry their sender",
+    senders.A.size === 1 && senders.B.size === 1 && !!fromA && !!fromB && fromA !== fromB,
+    `A heard from ${[...senders.A]}, B heard from ${[...senders.B]}`
+  );
+
+  try {
+    await callA.acquireFloor();
+    fail(18, "multiplex has no floor", "acquire succeeded");
+  } catch (err) {
+    check(18, "multiplex has no floor", /floor_disabled/.test(err.message), err.message);
+  }
+
+  const walkie = createClient(URL, { token: TOKEN });
+  try {
+    await walkie.channel(CALL).subscribe();
+    fail(19, "a joiner in the other mode is refused", "the exclusive join succeeded");
+  } catch (err) {
+    check(19, "a joiner in the other mode is refused", /binary_mode_mismatch/.test(err.message), err.message);
+  }
+  walkie.disconnect();
+
+  // 22 — the multiplex topic is full at the server's ceiling (2 in this run)
+  const third = createClient(URL, { token: TOKEN });
+  try {
+    await third.channel(CALL, { binaryMode: "multiplex" }).subscribe();
+    fail(22, "a multiplex topic has a member ceiling", "the third member was accepted");
+  } catch (err) {
+    check(22, "a multiplex topic has a member ceiling", /topic_full/.test(err.message), err.message);
+  }
+  third.disconnect();
 
   a.disconnect();
   b.disconnect();

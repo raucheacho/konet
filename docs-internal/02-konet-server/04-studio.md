@@ -42,7 +42,19 @@ Auth is enforced **twice**, and both are needed:
    again.
 
 Both short-circuit on `not Konet.Auth.studio_auth_enabled?()`, so an unset
-`KONET_STUDIO_PASSWORD` means **the Studio is fully open**.
+`KONET_STUDIO_PASSWORD` means **the Studio is open** — channels, presence, logs
+and broadcast. Two things limit the damage, both keyed on the same check:
+
+- `KeysLive` assigns `locked: true`: the service key is rendered masked, the
+  JWT secret's Show button is gone and `toggle_secret` / `rotate` events are
+  ignored. It used to show both keys in clear, reveal the secret — which signs
+  any token — on a click, and rotate for anyone. Pinned by
+  `test/konet_web/live/keys_live_test.exs`.
+- `Konet.Application` logs a warning at boot when the endpoint is serving and
+  no password is set.
+
+`docker-compose.yml` makes the password **required** (`:?`), so the reference
+deployment cannot start without one.
 
 The login page is not a template: `StudioAuthController.login_page/1` returns a
 here-doc HTML string with an inline CSRF token, sent via `send_resp/3`. It pulls

@@ -152,3 +152,27 @@ export function decodeServerFrame(buffer: ArrayBuffer): BinaryFrame | null {
 
   return null;
 }
+
+/**
+ * Splits the sender off a binary frame received on a `"multiplex"` topic.
+ *
+ * In that mode the server relays every frame as
+ *
+ *   sender_size | sender | data
+ *
+ * — one length byte, then the sender's user id (the token's `sub`), then the
+ * bytes the sender sent. The server writes it, so it cannot be forged by the
+ * sender. `"exclusive"` frames carry no prefix: the floor holder is the sender.
+ *
+ * Returns null on a frame too short for its own prefix, for the same reason
+ * `decodeServerFrame` does. `data` is a view, not a copy.
+ */
+export function splitSender(bytes: Uint8Array): { sender: string; data: Uint8Array } | null {
+  if (bytes.length < 1) return null;
+  const size = bytes[0]!;
+  if (bytes.length < 1 + size) return null;
+  return {
+    sender: decoder.decode(bytes.subarray(1, 1 + size)),
+    data: bytes.subarray(1 + size),
+  };
+}

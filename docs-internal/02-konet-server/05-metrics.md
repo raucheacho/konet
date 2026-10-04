@@ -11,25 +11,31 @@ talk to each other.
 
 ## `Konet.Metrics`
 
-`lib/konet/metrics.ex`. A single GenServer holding four numbers plus a boot
-timestamp:
+`lib/konet/metrics.ex`. A GenServer holding the connection count, the last
+computed rate and a boot timestamp; the message total lives in ETS:
 
 ```elixir
 defstruct connections: 0,
           messages_total: 0,
           messages_rate: 0,
-          messages_current_window: 0,
           started_at: nil
 ```
 
 - `connection_opened/1` — cast from `UserSocket.connect/3` with the socket
   transport pid, which `Konet.Metrics` then monitors. There is no
   `connection_closed`: the `:DOWN` is the decrement.
-- `message_sent/0` — cast from `RoomChannel` (text broadcast **and** binary
-  frame), `AdminController.broadcast/2`, and `Studio.BroadcastLive`.
-- A `:timer.send_interval(1_000, :compute_rate)` moves
-  `messages_current_window` into `messages_rate` and zeroes the window, then
-  broadcasts `{:metrics_update, state}` on `"studio:metrics"`.
+- `message_sent/0` — called from `RoomChannel` (text broadcast **and** binary
+  frame), `AdminController.broadcast/2`, and `Studio.BroadcastLive`. It does
+  **not** message the GenServer: it is an `:ets.update_counter/4` on
+  `:konet_metrics` (owned by `Konet.Tables`, `write_concurrency` +
+  `decentralized_counters`). It used to be a cast to this one process on every
+  binary frame — the same single serialization point `KONET_LOG_BROADCASTS`
+  exists to avoid for `LogBuffer`. Pinned by
+  `"counting a message never waits on the Metrics process"`.
+- A `:timer.send_interval(1_000, :compute_rate)` reads the total, sets
+  `messages_rate` to the difference with the previous read, then broadcasts
+  `{:metrics_update, state}` on `"studio:metrics"`. `get/0` reads the total
+  live.
 
 **`connections` is owned by a monitor.** `connection_opened/1` takes the socket
 transport pid, `Konet.Metrics` monitors it, and the count drops when that process

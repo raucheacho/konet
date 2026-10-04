@@ -25,6 +25,7 @@ defmodule KonetWeb.Studio.LogsLive do
 
   def handle_info(%{type: _} = event, socket) do
     entry = Map.put(event, :id, "log-#{System.unique_integer([:positive])}")
+
     {:noreply,
      socket
      |> assign(log_count: socket.assigns.log_count + 1)

@@ -73,7 +73,7 @@ if config_env() == :prod do
   config :konet,
     # Same list the socket's check_origin uses, so the REST API and the
     # WebSocket agree on who may call them. `false` here means "*".
-    allowed_origins: (if is_list(allowed_origins), do: allowed_origins, else: nil),
+    allowed_origins: if(is_list(allowed_origins), do: allowed_origins, else: nil),
     secret_file: secret_file,
     jwt_secret: jwt_secret,
     anon_key: System.get_env("KONET_ANON_KEY"),
@@ -101,7 +101,12 @@ if config_env() == :prod do
     webhook_url: System.get_env("KONET_WEBHOOK_URL"),
     webhook_secret: System.get_env("KONET_WEBHOOK_SECRET"),
     # Total attempts per event, not extra ones. 1 disables retrying.
-    webhook_retries: parse_int.("KONET_WEBHOOK_RETRIES", 3)
+    webhook_retries: parse_int.("KONET_WEBHOOK_RETRIES", 3),
+    # Deliveries in flight at once; beyond it an event is dropped and logged.
+    webhook_concurrency: parse_int.("KONET_WEBHOOK_CONCURRENCY", 50),
+    # Members of one multiplex topic; every one of them may send, and the
+    # fan-out grows with the square of the count. 0 removes the ceiling.
+    multiplex_max_members: parse_int.("KONET_MULTIPLEX_MAX_MEMBERS", 16)
 end
 
 if config_env() == :dev do
@@ -174,5 +179,10 @@ if config_env() == :dev do
     webhook_url: System.get_env("KONET_WEBHOOK_URL"),
     webhook_secret: System.get_env("KONET_WEBHOOK_SECRET"),
     # Total attempts per event, not extra ones. 1 disables retrying.
-    webhook_retries: parse_int.("KONET_WEBHOOK_RETRIES", 3)
+    webhook_retries: parse_int.("KONET_WEBHOOK_RETRIES", 3),
+    # Deliveries in flight at once; beyond it an event is dropped and logged.
+    webhook_concurrency: parse_int.("KONET_WEBHOOK_CONCURRENCY", 50),
+    # Members of one multiplex topic; every one of them may send, and the
+    # fan-out grows with the square of the count. 0 removes the ceiling.
+    multiplex_max_members: parse_int.("KONET_MULTIPLEX_MAX_MEMBERS", 16)
 end

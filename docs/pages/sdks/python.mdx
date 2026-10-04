@@ -47,9 +47,14 @@ client = KonetClient(
     heartbeat_interval=30.0,
     reconnect_delay=1.0,
     max_reconnect_tries=10,
+    heartbeat_timeout=10.0,
 )
 await client.connect()
 await client.disconnect()
+
+# status.state: "connecting" | "connected" | "reconnecting" | "disconnected" | "failed"
+# "reconnecting" also carries status.attempt and status.delay (seconds)
+off = client.on_status(lambda status: print(status.state))
 
 channel = client.channel("room:lobby")
 await channel.subscribe()
@@ -90,3 +95,24 @@ finally:
 
 `send_binary` copies its argument, so a caller may reuse one buffer for every
 frame.
+
+A refused frame — no floor, or over the rate limit — is reported on the channel,
+at most once per reason per second:
+
+```python
+channel.on("binary_error", lambda error: print(error["reason"]))  # "floor_required" | "rate_limited"
+```
+
+For a call, where both sides send at once, join in multiplex mode: there is no
+floor to take, and every member must ask for the same mode.
+
+```python
+call = client.channel("room:call-7", binary_mode="multiplex")
+await call.subscribe()
+
+def on_voice(data: bytes, sender: str) -> None:
+    ...  # sender: the user id of the member who sent this frame
+
+call.on_binary_from("a", on_voice)
+await call.send_binary("a", frame)
+```

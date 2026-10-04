@@ -296,3 +296,121 @@ def test_answered_heartbeat_keeps_the_socket(monkeypatch):
         await client.disconnect()
 
     run(scenario())
+
+
+# ── Binary mode ────────────────────────────────────────────────────────────
+
+
+def test_default_join_asks_for_no_mode_and_reads_exclusive(monkeypatch):
+    async def scenario():
+        transport = FakeTransport()
+        client = await _client(monkeypatch, transport)
+        channel = await _join(client, transport)
+
+        # Unchanged on the wire for every existing push-to-talk client.
+        assert transport.current.joins()[-1][4] == {}
+        # The reply carries no mode, as from a server older than it.
+        assert channel.binary_mode == "exclusive"
+
+        await client.disconnect()
+
+    run(scenario())
+
+
+def test_multiplex_is_asked_on_every_join(monkeypatch):
+    async def scenario():
+        transport = FakeTransport()
+        client = await _client(monkeypatch, transport)
+
+        channel = client.channel("room:call", binary_mode="multiplex")
+        task = asyncio.create_task(channel.subscribe())
+        await asyncio.sleep(0)
+        join = transport.current.joins()[-1]
+        assert join[4] == {"binary_mode": "multiplex"}
+        transport.current.reply_ok(join[1], "room:call", {"binary_mode": "multiplex"})
+        await task
+        assert channel.binary_mode == "multiplex"
+
+        # The server forgets a topic's mode once it empties, so a rejoin that
+        # dropped the parameter would come back exclusive — or be refused.
+        transport.current.drop()
+        for _ in range(200):
+            await asyncio.sleep(0.005)
+            if len(transport.sockets) > 1 and transport.current.joins():
+                break
+
+        assert channel.binary_mode is None
+        assert transport.current.joins()[-1][4] == {"binary_mode": "multiplex"}
+
+        await client.disconnect()
+
+    run(scenario())
+
+
+def test_channel_refuses_a_different_mode_for_an_existing_topic():
+    client = KonetClient("ws://test/socket", token="tok")
+    channel = client.channel("room:call", binary_mode="multiplex")
+
+    assert client.channel("room:call") is channel
+    assert client.channel("room:call", binary_mode="multiplex") is channel
+    with pytest.raises(ValueError, match="multiplex"):
+        client.channel("room:call", binary_mode="exclusive")
+    with pytest.raises(ValueError, match="unknown"):
+        client.channel("room:other", binary_mode="duplex")
+
+
+# ── Backoff and status ─────────────────────────────────────────────────────
+
+
+def test_reconnect_delay_jitters_half_of_each_step():
+    from konet.client import reconnect_delay
+
+    assert reconnect_delay(1.0, 0, lambda: 0.0) == 0.5
+    assert reconnect_delay(1.0, 0, lambda: 1.0) == 1.0
+    assert reconnect_delay(1.0, 2, lambda: 0.5) == 3.0
+    assert reconnect_delay(1.0, 20, lambda: 1.0) == 30.0  # ceiling
+    assert reconnect_delay(1.0, 20, lambda: 0.0) == 15.0
+    # Clients dropped at the same moment no longer come back together.
+    assert len({reconnect_delay(1.0, 3) for _ in range(20)}) > 1
+
+
+def test_status_reports_each_step_including_giving_up(monkeypatch):
+    async def scenario():
+        transport = FakeTransport()
+        seen = []
+
+        import konet.client as client_module
+
+        monkeypatch.setattr(client_module.websockets, "connect", transport)
+        client = KonetClient("ws://test/socket", token="tok", reconnect_delay=0.001,
+                             max_reconnect_tries=2, heartbeat_interval=3600.0)
+        off = client.on_status(seen.append)
+        # A failing handler must not break anything.
+        client.on_status(lambda _s: 1 / 0)
+
+        await client.connect()
+        transport.fail_times = 99
+        transport.current.drop()
+
+        for _ in range(400):
+            await asyncio.sleep(0.005)
+            if seen and seen[-1].state == "failed":
+                break
+
+        assert [s.state for s in seen] == [
+            "connecting", "connected",
+            "reconnecting", "connecting",
+            "reconnecting", "connecting",
+            "failed",
+        ]
+        assert seen[2].attempt == 1 and 0.0005 <= seen[2].delay <= 0.001
+
+        await client.disconnect()
+        assert seen[-1].state == "disconnected"
+
+        off()
+        count = len(seen)
+        await client.disconnect()
+        assert len(seen) == count
+
+    run(scenario())

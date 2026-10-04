@@ -7,6 +7,9 @@ defmodule Konet.Floor do
   no* rather than mixed in. Konet stays generic: it arbitrates who may send,
   it does not know what is being sent.
 
+  Only for topics in `:exclusive` binary mode. A `:multiplex` topic never
+  reaches this module — see `Konet.BinaryMode`.
+
   Two properties matter and both are handled here rather than by callers:
 
     * **Acquisition is atomic.** Two clients pressing at the same millisecond
@@ -16,14 +19,40 @@ defmodule Konet.Floor do
     * **The floor is always released.** A holder whose channel process dies —
       a rider entering a tunnel mid-sentence — would otherwise mute the topic
       forever, so holders are monitored. A holder that simply stops talking
-      without releasing is swept once it exceeds `max_hold_ms`.
+      without releasing is swept once it exceeds `max_hold_ms`. Either way the
+      topic is told, with `konet:floor` and `holder: nil`.
 
   Each row carries two timestamps because they answer different questions: the
   monotonic one is what the sweep measures elapsed hold time against, and the
   wall-clock one is what goes on the wire, since a client has no way to
   interpret this node's monotonic clock.
+
+  ## Webhooks
+
+  Every acquisition and every release is also emitted to the configured webhook
+  endpoint as `floor_acquired` and `floor_released`. The `konet:floor` broadcast
+  already tells *clients* who holds a topic; a webhook tells the **operator's
+  backend**, which is not a client and joins no channel. The two are not
+  interchangeable: a record assembled by a connected client is assembled by a
+  participant, whereas a webhook is signed by the arbiter.
+
+  `floor_released` carries a `reason`, because the three ways a floor ends are
+  not the same fact:
+
+    * `"released"`   — the holder gave it up
+    * `"disconnected"` — the holding process died
+    * `"expired"`    — `max_hold_ms` elapsed without a release
+
+  Emitting only the first would leave acquisitions with no matching release in
+  exactly the cases worth knowing about, and a reader cannot distinguish a
+  missing event from a holder who never stopped.
+
+  `topic` is passed through opaquely. Konet does not parse it, and whatever
+  structure a caller encodes in it is the caller's own.
   """
   use GenServer
+
+  alias Konet.Webhooks
 
   @table :konet_floor
   @default_max_hold_ms 30_000
@@ -64,6 +93,10 @@ defmodule Konet.Floor do
 
     if :ets.insert_new(@table, entry) do
       GenServer.cast(__MODULE__, {:monitor, topic, pid})
+      # Only on a genuine take. The branch below returns the *original* `since`
+      # for a repeated press, which is the same hold and must not be reported
+      # as a second one.
+      Webhooks.emit("floor_acquired", %{topic: topic, user_id: user_id, at: now_wall})
       {:ok, user_id, now_wall}
     else
       case :ets.lookup(@table, topic) do
@@ -80,11 +113,12 @@ defmodule Konet.Floor do
   """
   def release(topic, user_id) do
     case :ets.lookup(@table, topic) do
-      [{^topic, ^user_id, _pid, _since, _since_wall}] ->
+      [{^topic, ^user_id, _pid, _since, since_wall}] ->
         :ets.delete(@table, topic)
         # Drop the monitor too: a channel that acquires and releases repeatedly
         # would otherwise accumulate one monitor per press on its own pid.
         GenServer.cast(__MODULE__, {:demonitor, topic})
+        emit_released(topic, user_id, since_wall, "released")
         :ok
 
       _ ->
@@ -156,7 +190,19 @@ defmodule Konet.Floor do
       if topic do
         # Match on the pid too: by now the topic may have been legitimately
         # re-acquired by someone else, and that holder must not be evicted.
-        :ets.match_delete(@table, {topic, :_, pid, :_, :_})
+        #
+        # Read before deleting: the row carries the holder and the wall clock
+        # the release event needs, and `match_delete` would take them with it.
+        case :ets.match_object(@table, {topic, :_, pid, :_, :_}) do
+          [{^topic, user_id, ^pid, _since, since_wall}] ->
+            :ets.delete(@table, topic)
+            emit_released(topic, user_id, since_wall, "disconnected")
+            announce_free(topic)
+
+          _ ->
+            :ok
+        end
+
         %{state | refs: refs, topics: Map.delete(state.topics, topic)}
       else
         %{state | refs: refs}
@@ -171,12 +217,18 @@ defmodule Konet.Floor do
     # =< rather than <: a hold is expired once it has *reached* max_hold_ms, and
     # with a max of 0 (tests, or an operator disabling holds) a strict < never
     # fires for a floor taken in the current millisecond.
+    # The holder and its wall clock come back with the topic: a release event
+    # cannot be built from a topic alone.
     expired =
-      :ets.select(@table, [{{:"$1", :_, :_, :"$2", :_}, [{:"=<", :"$2", cutoff}], [:"$1"]}])
+      :ets.select(@table, [
+        {{:"$1", :"$2", :_, :"$3", :"$4"}, [{:"=<", :"$3", cutoff}], [{{:"$1", :"$2", :"$4"}}]}
+      ])
 
     state =
-      Enum.reduce(expired, state, fn topic, acc ->
+      Enum.reduce(expired, state, fn {topic, user_id, since_wall}, acc ->
         :ets.delete(@table, topic)
+        emit_released(topic, user_id, since_wall, "expired")
+        announce_free(topic)
         drop_monitor(acc, topic)
       end)
 
@@ -193,6 +245,33 @@ defmodule Konet.Floor do
         Process.demonitor(ref, [:flush])
         %{state | refs: Map.delete(state.refs, ref), topics: topics}
     end
+  end
+
+  # `held_ms` is computed from the wall clock rather than the monotonic one so
+  # that it agrees with the two timestamps a consumer can actually see. It is a
+  # convenience, not a measurement: a consumer that cares can subtract.
+  defp emit_released(topic, user_id, since_wall, reason) do
+    at = now_wall_ms()
+
+    Webhooks.emit("floor_released", %{
+      topic: topic,
+      user_id: user_id,
+      at: at,
+      since: since_wall,
+      held_ms: at - since_wall,
+      reason: reason
+    })
+  end
+
+  # The two releases this module decides on its own — a dead holder, an expired
+  # hold — are announced to the topic like any other. Only an explicit release
+  # and RoomChannel.terminate/2 used to announce, so a swept holder kept showing
+  # as talking to every listener until someone else pressed, and the holder
+  # itself learnt nothing: the floor_required reply to its next frame is one no
+  # SDK tracks. Through the endpoint, since this process has no socket; it
+  # reaches the holder too, which is how it learns.
+  defp announce_free(topic) do
+    KonetWeb.Endpoint.broadcast(topic, "konet:floor", %{holder: nil, since: now_wall_ms()})
   end
 
   defp schedule_sweep, do: Process.send_after(self(), :sweep, @sweep_every_ms)

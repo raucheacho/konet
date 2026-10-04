@@ -65,6 +65,11 @@ WORKDIR /app
 
 RUN chown nobody /app
 
+# Mount point for the konet-data volume (KONET_SECRET_FILE). Created here and
+# owned by nobody, so a fresh named volume inherits a directory the server can
+# write to.
+RUN mkdir -p /data && chown nobody /data
+
 COPY --from=builder --chown=nobody:root /app/_build/prod/rel/konet ./
 
 USER nobody

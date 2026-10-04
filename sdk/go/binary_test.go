@@ -130,3 +130,31 @@ func TestDecodeRejectsTruncatedFrame(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitSenderLayout(t *testing.T) {
+	// sender_size | sender | data
+	frame := append([]byte{5}, append([]byte("alice"), 0xAA, 0xBB)...)
+	sender, data, err := splitSender(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sender != "alice" || !bytes.Equal(data, []byte{0xAA, 0xBB}) {
+		t.Errorf("got %q %v", sender, data)
+	}
+}
+
+func TestSplitSenderCountsBytesNotRunes(t *testing.T) {
+	id := []byte("zoé") // 4 bytes, 3 runes
+	sender, data, err := splitSender(append(append([]byte{byte(len(id))}, id...), 7))
+	if err != nil || sender != "zoé" || !bytes.Equal(data, []byte{7}) {
+		t.Errorf("got %q %v %v", sender, data, err)
+	}
+}
+
+func TestSplitSenderRejectsATruncatedPrefix(t *testing.T) {
+	for _, frame := range [][]byte{{}, {9, 'a'}} {
+		if _, _, err := splitSender(frame); err != ErrShortFrame {
+			t.Errorf("%v: err = %v, attendu ErrShortFrame", frame, err)
+		}
+	}
+}

@@ -12,6 +12,78 @@ rather than mixed in. Konet stays generic: it arbitrates who may send, it does
 not know what is being sent. Nothing in the server mentions audio, Opus or
 codecs.
 
+## Binary modes: `Konet.BinaryMode`
+
+The floor was originally unconditional — every binary frame needed it — which
+made the transport push-to-talk-only. A call needs both sides to send at once,
+so a topic now runs one of two modes, passed as `binary_mode` in the join
+payload:
+
+| Mode | Right to send | `Konet.Floor` |
+|---|---|---|
+| `exclusive` (default) | the floor holder | used as before |
+| `multiplex` | every member | **never called** — not acquire, not `holds?`, not release in `terminate/2` |
+
+`lib/konet/binary_mode.ex`. Why the mode is the **topic's**, not the member's:
+a push-to-talk client relies on a second sender being refused, a call client on
+never being refused; they cannot share a topic. So:
+
+- each member is a row `{topic, pid, mode}` in the `:konet_binary_mode` bag
+  (owned by `Konet.Tables`);
+- `claim/3` is a `GenServer.call`, so "read the mode in force" and "add this
+  member" are one step — two first joiners asking for different modes resolve
+  to one winner (pinned by `binary_mode_test.exs`, 40 concurrent claims);
+- a joiner asking for the other mode gets
+  `{reason: "binary_mode_mismatch", binary_mode: <in force>}`;
+- members are **monitored**, never released explicitly: a channel process
+  ending is the only way to leave, and the `:DOWN` drops the row. A claim also
+  prunes dead pids itself, because a `:DOWN` may still be queued behind it;
+- on restart, monitors are rebuilt from the table (same pattern as `Floor`).
+
+**Member ceiling (multiplex only).** `claim/3` refuses a multiplex joiner once
+the topic holds `KONET_MULTIPLEX_MAX_MEMBERS` live members (default 16, `0` =
+none) with `{:error, {:full, max}}`, which `RoomChannel` turns into
+`{reason: "topic_full", max_members: max}`. Checked in the same serialized step
+as the mode, so it costs the hot path nothing. It counts members, not active
+senders: knowing who is "active" would mean tracking every frame. Exclusive
+topics have no ceiling — the floor already bounds them to one sender.
+
+An absent `binary_mode` means `exclusive`, so every existing client — and every
+text-only client — joins exactly as before. The flip side: **every member of a
+multiplex topic must ask for multiplex**, including a text-only observer.
+
+`RoomChannel.join/3` caches the mode in `socket.assigns.binary_mode`. The cache
+cannot go stale: the mode changes only once the topic is empty, and a joined
+channel is by definition in it. So the multiplex hot path reads no table at all.
+
+The join reply now carries `%{binary_mode: "exclusive" | "multiplex"}` (it was
+empty). SDKs read an empty reply — an older server — as `exclusive`.
+
+### Sender prefix (multiplex only)
+
+A broadcast binary frame carries topic, event and data — no sender. In
+`exclusive` the floor holder is the sender; in `multiplex` with three or more
+members, receivers could not tell streams apart. So in `multiplex` the server
+relays `data` as:
+
+```
+<<byte_size(user_id)::8, user_id::binary, data::binary>>
+```
+
+- Written by the server from `socket.assigns.user_id` (the token's `sub`), so a
+  member cannot impersonate another.
+- The prefix is built once at join (`socket.assigns.sender_prefix`); the hot
+  path only concatenates (`stamp/2`). `exclusive` sockets have `nil` and frames
+  pass through untouched — Goule's wire format is unchanged.
+- One length byte, like every size in Phoenix's framing: a `user_id` that is
+  not a binary or exceeds 255 bytes is refused at a multiplex join with
+  `invalid_sender_id`, before the mode is claimed.
+- SDKs split it off only when the **confirmed** mode is `multiplex` (an older
+  server accepts the join, stays exclusive and stamps nothing), and drop a frame
+  too short for its own prefix. JS passes `sender` as the handler's second
+  argument; Go has `OnBinaryFrom`, Python `on_binary_from`. The splitter is
+  `splitSender` / `splitSender` / `split_sender` in each `binary.*`.
+
 ## `Konet.Floor`
 
 `lib/konet/floor.ex`. One ETS row per topic: `{topic, user_id, pid, since_ms}`.
@@ -43,11 +115,21 @@ end
 1. `RoomChannel.terminate/2` calls `Floor.release/2` explicitly and announces
    `konet:floor` with `holder: nil`, so other clients stop showing someone as
    talking.
-2. `Konet.Floor` monitors the holder's pid. On `:DOWN` it clears the row with
-   `:ets.match_delete(@table, {topic, :_, pid, :_})` — matching on the pid too,
-   because by then the topic may legitimately belong to someone else.
+2. `Konet.Floor` monitors the holder's pid. On `:DOWN` it reads the row with
+   `:ets.match_object(@table, {topic, :_, pid, :_, :_})` and deletes it —
+   matching on the pid too, because by then the topic may legitimately belong
+   to someone else.
 3. A sweep every 5 s deletes any row older than `KONET_FLOOR_MAX_HOLD_MS`
    (default 30 s), for a holder who simply stops talking without releasing.
+
+Paths 2 and 3 also **announce** `konet:floor` with `holder: nil`, through
+`KonetWeb.Endpoint.broadcast/3` since `Konet.Floor` has no socket. They used to
+delete the row silently: listeners kept showing the holder as talking until
+someone else pressed, and the holder learnt nothing — the `floor_required`
+reply to its next frame is one no SDK tracks. The announcement reaches the
+holder too. Path 1 needs no second announcement: once `terminate/2` has
+released, the `:DOWN` finds no row. Pinned by
+`describe "releases decided by the arbiter are announced"` in `floor_test.exs`.
 
 `release/2` is holder-checked: a late release from a previous holder must not
 cut off whoever is talking now.
@@ -73,7 +155,9 @@ per press on its own pid.
 
 ## Floor protocol
 
-Two client events, one server broadcast.
+Two client events, one server broadcast. In `multiplex` mode both events are
+refused with `{reason: "floor_disabled", binary_mode: "multiplex"}` by a clause
+placed before them, and `konet:floor` is never broadcast.
 
 | Direction | Event | Payload | Reply |
 |---|---|---|---|
@@ -83,13 +167,14 @@ Two client events, one server broadcast.
 
 The `konet:floor` broadcast goes to **everyone including the holder**: subscribers
 need to know a stream is starting before its first frame arrives, and the holder
-needs the same id to stamp its frames with.
+sees the same `holder` and `since` as everyone else. Exclusive frames carry no
+holder id: the sender is implied by this announcement.
 
 ## The binary hot path
 
 ```elixir
 def handle_in(event, {:binary, data}, socket) do
-  if Konet.Floor.holds?(socket.topic, socket.assigns.user_id) do
+  if may_send_binary?(socket) do  # true in multiplex; Floor.holds?/2 in exclusive
     case RateLimiter.check_binary(socket.assigns.socket_id) do
       :ok ->
         Metrics.message_sent()
@@ -125,14 +210,31 @@ Phoenix.
 
 ## Binary frames get their own rate budget
 
-`Konet.RateLimiter.check_binary/1` uses key `"bin:#{socket_id}:#{second}"`,
-separate from `"msg:…"`. Rationale, from `rate_limiter.ex`:
+`Konet.RateLimiter.check_binary/1` uses key `{:bin, socket_id, second}`,
+separate from `{:msg, …}`. Rationale, from `rate_limiter.ex`:
 
 > Binary frames arrive at a media rate, not a message rate: 20 ms Opus frames
 > are 50 per second on their own, and sharing the message budget would have a
-> talker starve their own position updates. The floor already allows one sender
-> per topic, so this is a backstop against a single flooding client, not the
-> primary control.
+> sender starve their own non-media events. The budget is per socket: it stops
+> one client flooding. In an :exclusive topic the floor also bounds the topic to
+> one sender; in a :multiplex topic nothing does, by design.
+
+In multiplex, *n* senders fan out *n × (n − 1)* streams; the member ceiling
+above is what bounds it.
+
+### Refusals: one reply per reason per second
+
+A refused frame (`floor_required`, `rate_limited`) is answered through
+`refuse_binary/2`, which keeps the last reply time per reason in
+`socket.assigns.binary_refused_at` and answers at most once per reason per
+second. It used to answer every refused frame — fifty error replies a second for
+a client that kept sending after losing the floor.
+
+The reply is a JSON `phx_reply` to the frame's ref. The SDKs give every binary
+push a ref starting with `b` (`b42`) and track none of them; a `phx_reply` with
+no waiter and a `b` ref is a binary refusal, surfaced as a channel
+`binary_error` event `{topic, reason}` — deduplicated per reason per second on
+the client too, for servers older than the throttle.
 
 Default `KONET_RATE_LIMIT_BINARY=120`.
 
@@ -197,7 +299,7 @@ sequenceDiagram
         Note over Ch: terminate/2 → release + announce holder: nil
         Note over F: monitor :DOWN also clears the row
     else Alice goes quiet
-        Note over F: sweep after KONET_FLOOR_MAX_HOLD_MS
+        Note over F: sweep after KONET_FLOOR_MAX_HOLD_MS → broadcasts konet:floor {holder: nil}
     end
 
     Note over B: Bob presses meanwhile
@@ -206,6 +308,19 @@ sequenceDiagram
 ```
 
 ## Test coverage
+
+- `describe "binary mode"` / `describe "multiplex"` in `room_channel_test.exs` —
+  default and explicit modes, invalid mode, mismatch refusal, mode forgotten
+  when the topic empties, floor events refused and `Konet.Floor` never written,
+  and **two members sending 30 interleaved frames each**, every member running
+  in its own process so the test sees exactly what each socket receives.
+- `test/konet/binary_mode_test.exs` — the registry: concurrent first joiners,
+  stale rows, crash/restart.
+- Sender prefix: the duplex test sends identical payloads from both members and
+  tells them apart by prefix only; a 256-byte id is refused; exclusive frames
+  are asserted untouched.
+- Conformance steps 16–20 run the same multiplex scenario against a real server
+  from each SDK.
 
 `test/konet_web/room_channel_test.exs` covers the whole feature:
 

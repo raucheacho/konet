@@ -162,9 +162,14 @@ async def main() -> None:
         echoed = await bin_a.wait(timeout=0.6)
         check(10, "binary does not echo to sender", echoed is None, "sender received its own audio")
 
-        # 11 — a client without the floor is refused; the channel survives it
+        # 11/21 — a client without the floor is refused, is told so, and the
+        # channel survives it
+        refused = watch(ch_b, "binary_error")
         await ch_b.send_binary("audio", payload)
-        await asyncio.sleep(0.3)
+        refusal = await refused.wait(timeout=2.0)
+        check(21, "a refused binary frame is reported",
+              isinstance(refusal, dict) and refusal.get("reason") == "floor_required"
+              and refusal.get("topic") == ROOM, str(refusal))
 
         survive = watch(ch_b, "conf:after-refusal")
         await ch_a.send("conf:after-refusal", {"ok": True})
@@ -219,9 +224,85 @@ async def main() -> None:
         await ch_a.send("conf:final", {"done": True})
         check(14, "channel survives the whole scenario", await final.wait() is not None, "no final message")
 
+        await multiplex(a, b, f"{ROOM}-call")
+
     finally:
         await a.disconnect()
         await b.disconnect()
+
+
+async def multiplex(a: KonetClient, b: KonetClient, call: str) -> None:
+    """16–19: both send at once, there is no floor, the mode is the topic's."""
+    call_a = a.channel(call, binary_mode="multiplex")
+    call_b = b.channel(call, binary_mode="multiplex")
+    try:
+        await call_a.subscribe()
+        await call_b.subscribe()
+        check(16, "multiplex join is confirmed",
+              call_a.binary_mode == "multiplex" and call_b.binary_mode == "multiplex",
+              f"A={call_a.binary_mode} B={call_b.binary_mode}")
+    except Exception as exc:
+        _fail(16, "multiplex join is confirmed", str(exc))
+
+    frames = 10
+    heard: dict[str, list[bytes]] = {"A": [], "B": []}
+    senders: dict[str, set[str]] = {"A": set(), "B": set()}
+
+    def listen(who: str):
+        def on_frame(data: bytes, sender: str) -> None:
+            heard[who].append(bytes(data))
+            senders[who].add(sender)
+        return on_frame
+
+    call_a.on_binary_from("voice", listen("A"))
+    call_b.on_binary_from("voice", listen("B"))
+
+    # Interleaved, with neither side taking anything first.
+    for n in range(frames):
+        await call_a.send_binary("voice", bytes([0xA, n]))
+        await call_b.send_binary("voice", bytes([0xB, n]))
+    await asyncio.sleep(0.5)
+
+    def stream(tag: int) -> list[bytes]:
+        return [bytes([tag, n]) for n in range(frames)]
+
+    check(17, "two simultaneous streams both relayed",
+          heard["A"] == stream(0xB) and heard["B"] == stream(0xA),
+          f"A heard {heard['A']}, B heard {heard['B']}")
+
+    # 20 — each frame names its sender: one id per stream, and not the same one
+    from_b = next(iter(senders["A"]), "")
+    from_a = next(iter(senders["B"]), "")
+    check(20, "multiplex frames carry their sender",
+          len(senders["A"]) == 1 and len(senders["B"]) == 1 and from_a and from_b and from_a != from_b,
+          f"A heard from {senders['A']}, B heard from {senders['B']}")
+
+    try:
+        await call_a.acquire_floor()
+        _fail(18, "multiplex has no floor", "acquire succeeded")
+    except Exception as exc:
+        check(18, "multiplex has no floor", "floor_disabled" in str(exc), str(exc))
+
+    walkie = KonetClient(URL, token=TOKEN, max_reconnect_tries=3)
+    await walkie.connect()
+    try:
+        await walkie.channel(call).subscribe()
+        _fail(19, "a joiner in the other mode is refused", "the exclusive join succeeded")
+    except Exception as exc:
+        check(19, "a joiner in the other mode is refused", "binary_mode_mismatch" in str(exc), str(exc))
+    finally:
+        await walkie.disconnect()
+
+    # 22 — the multiplex topic is full at the server's ceiling (2 in this run)
+    third = KonetClient(URL, token=TOKEN, max_reconnect_tries=3)
+    await third.connect()
+    try:
+        await third.channel(call, binary_mode="multiplex").subscribe()
+        _fail(22, "a multiplex topic has a member ceiling", "the third member was accepted")
+    except Exception as exc:
+        check(22, "a multiplex topic has a member ceiling", "topic_full" in str(exc), str(exc))
+    finally:
+        await third.disconnect()
 
 
 if __name__ == "__main__":

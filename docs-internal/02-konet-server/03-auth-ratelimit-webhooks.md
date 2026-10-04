@@ -105,9 +105,9 @@ each a counter keyed by bucket + time window:
 
 | Function | Key | Window | Default | Env var |
 |---|---|---|---|---|
-| `check_connection/1` | `"conn:#{ip}:#{minute}"` | 1 minute | 200 | `KONET_CONN_RATE_LIMIT` |
-| `check_message/1` | `"msg:#{socket_id}:#{second}"` | 1 second | 60 | `KONET_RATE_LIMIT` |
-| `check_binary/1` | `"bin:#{socket_id}:#{second}"` | 1 second | 120 | `KONET_RATE_LIMIT_BINARY` |
+| `check_connection/1` | `{:conn, ip, minute}` | 1 minute | 200 | `KONET_CONN_RATE_LIMIT` |
+| `check_message/1` | `{:msg, socket_id, second}` | 1 second | 60 | `KONET_RATE_LIMIT` |
+| `check_binary/1` | `{:bin, socket_id, second}` | 1 second | 120 | `KONET_RATE_LIMIT_BINARY` |
 
 `:ets.update_counter(@table, key, {2, 1}, {key, 0})` increments and creates the
 row atomically in one call — no read-then-write race.
@@ -116,12 +116,16 @@ Windows are **fixed**, derived from `System.monotonic_time(:second)` and
 `div(…, 60)`. Not a sliding window: a client can send 60 messages at the end of
 one second and 60 at the start of the next.
 
-⚠️ **Fragile — cleanup wipes everything.** Every 120 s,
-`handle_info(:cleanup, …)` runs `:ets.delete_all_objects(@table)`. Rows are
-never expired individually. Two consequences: memory is bounded (good), and
-every client's counter resets simultaneously every 2 minutes, briefly allowing a
-double budget in the second that straddles the wipe (harmless at these limits,
-but it is why the limiter should not be used for anything security-sensitive).
+**Cleanup only drops windows that are over.** Every 120 s,
+`handle_info(:cleanup, …)` runs one `:ets.select_delete/2` removing `:conn` rows
+whose minute is past and `:msg`/`:bin` rows whose second is past — which is why
+the keys are tuples, so the window can be matched on. It used to run
+`:ets.delete_all_objects/1`, which also reset the *current* window: a client at
+its limit got a fresh budget mid-window. Pinned by
+`"cleanup keeps the current window, so a client at its limit stays limited"`.
+
+The fixed window itself still allows up to twice the limit across a boundary
+(the end of one window plus the start of the next) — inherent to fixed windows.
 
 Covered by `test/konet/rate_limiter_test.exs`, which drives the limits through
 `Application.put_env/3` — hence `async: false`.
@@ -135,44 +139,104 @@ Disabled unless `KONET_WEBHOOK_URL` is set. Four events:
 | `channel_occupied` | `ChannelRegistry.handle_cast({:joined, …})` | subscriber count reaches 1 |
 | `channel_vacated` | `ChannelRegistry.handle_cast({:left, …})` | last subscriber leaves |
 | `member_joined` | `RoomChannel.join/3` | every successful join |
-| `member_left` | `RoomChannel.terminate/2` | every channel teardown |
+| `member_left` | `RoomChannel.terminate/2` | teardown of a channel that **joined** (a refused join emits nothing) |
+| `floor_acquired` | `Floor.acquire/3` | the floor is genuinely taken |
+| `floor_released` | `Floor.release/2`, `:DOWN`, `:sweep` | the floor ends, whichever way |
 
 Body:
 
 ```json
-{"event": "member_joined", "data": {"room": "lobby", "user": "alice"},
+{"id": "9f2c4a1b7e3d5f60", "event": "member_joined",
+ "data": {"room": "lobby", "user": "alice"},
  "timestamp": "2026-08-11T09:00:00.000000Z"}
 ```
+
+`id` is random per event and **the same across retries**, so a receiver can
+deduplicate on it.
 
 With `KONET_WEBHOOK_SECRET` set, each request carries
 `x-konet-signature: sha256=<hex>` — HMAC-SHA256 of the raw body.
 
-Delivery is fire-and-forget from `Konet.TaskSupervisor` using Erlang's built-in
-`:httpc` (which is why `:inets` and `:ssl` are in `extra_applications`). A slow
-or down receiver never blocks channel operations. **Failures are logged, not
-retried** — non-2xx and transport errors both produce a `Logger.warning` and
-nothing else.
+Delivery is fire-and-forget using Erlang's built-in `:httpc` (which is why
+`:inets` and `:ssl` are in `extra_applications`). A slow or down receiver never
+blocks channel operations.
 
-⚠️ **Fragile — no ordering, no delivery guarantee, no retry.** Each event spawns
-its own task, so `member_joined` and `member_left` for the same user can arrive
-out of order. Receivers must be idempotent and must not treat webhook order as
-authoritative. There is also no timeout on the task itself, only a 5 s
-`:httpc` timeout.
+- **Bounded pool.** Each attempt is a task under `Konet.WebhookSupervisor`, a
+  `Task.Supervisor` started with `max_children: KONET_WEBHOOK_CONCURRENCY`
+  (default 50). An event arriving when the pool is full is **dropped** with a
+  `Logger.warning` — not queued. Before, every event started its own task with
+  no ceiling.
+- **Retries.** A 5xx, a 408, a 429 or a transport error is retried, up to
+  `KONET_WEBHOOK_RETRIES` attempts in total (default 3; 1 disables retrying),
+  after 500 ms, then 1 s, 2 s… Any other 4xx is not retried: the receiver
+  understood and refused.
+- **A pending retry holds no slot.** The failed attempt's task ends and the
+  `Konet.Webhooks` GenServer schedules the next one with
+  `Process.send_after/3`. It used to `Process.sleep/1` inside the task,
+  occupying it for the whole backoff. The cost: pending retries live in that
+  GenServer's timers and are lost if it crashes.
+- **HTTPS is verified explicitly**: `verify: :verify_peer`,
+  `:public_key.cacerts_get()` (the OS store — the image installs
+  `ca-certificates`), SNI and an HTTPS hostname check. Nothing relies on
+  `:httpc` defaults, which changed across OTP releases.
+- Each attempt has a 5 s `:httpc` timeout.
+
+⚠️ **No ordering guarantee, at-least-once delivery.** See *Ordering* below.
+
+### The floor pair
+
+`konet:floor` tells **clients** who holds a topic. These two tell the caller's
+**backend**, which is not a client and joins no channel. The distinction is the
+point: a record assembled by a connected client is assembled by a participant,
+whereas a webhook is signed by the arbiter.
+
+```json
+{"event": "floor_acquired", "data": {"topic": "room:x", "user_id": "alice", "at": 1765000000000}}
+{"event": "floor_released", "data": {"topic": "room:x", "user_id": "alice",
+                                     "at": 1765000009000, "since": 1765000000000,
+                                     "held_ms": 9000, "reason": "released"}}
+```
+
+`reason` is `released` (the holder gave it up), `disconnected` (the holding
+process died) or `expired` (`max_hold_ms` elapsed). All three are emitted, and
+that is deliberate: emitting only the first would leave acquisitions with no
+matching release in exactly the cases worth knowing about, and a reader cannot
+tell a missing event from a holder who never stopped.
+
+A repeated acquire by the current holder returns the *original* `since` and
+emits **nothing** — it is the same hold, and counting it twice would invent a
+transmission that never happened.
+
+`topic` is opaque. Konet does not parse it; whatever structure a caller encodes
+there is the caller's own.
+
+### Ordering
+
+Each attempt is its own task and a retry pushes an event further back, so
+`member_joined` and `member_left` for the same user can arrive out of order.
+Receivers must be idempotent (on `id`) and must not treat webhook order as
+authoritative.
 
 ```mermaid
 flowchart LR
     J["RoomChannel.join/3"] --> WH1["Webhooks.emit(member_joined)"]
     T["RoomChannel.terminate/2"] --> WH2["Webhooks.emit(member_left)"]
-    R1["ChannelRegistry :joined<br/>(count == 1)"] --> WH3["emit(channel_occupied)"]
-    R2["ChannelRegistry :left<br/>(count <= 1)"] --> WH4["emit(channel_vacated)"]
+    FA["Floor.acquire/3"] --> WH3["Webhooks.emit(floor_acquired)"]
+    FR["Floor.release/2 · :DOWN · :sweep"] --> WH4["Webhooks.emit(floor_released)"]
+    R1["ChannelRegistry :joined<br/>(count == 1)"] --> WH5["emit(channel_occupied)"]
+    R2["ChannelRegistry :left<br/>(count <= 1)"] --> WH6["emit(channel_vacated)"]
 
-    WH1 & WH2 & WH3 & WH4 --> E{"KONET_WEBHOOK_URL set?"}
+    WH1 & WH2 & WH3 & WH4 & WH5 & WH6 --> E{"KONET_WEBHOOK_URL set?"}
     E -->|no| NOOP[":ok, nothing sent"]
-    E -->|yes| TASK["Task.Supervisor.start_child<br/>Konet.TaskSupervisor"]
+    E -->|yes| TASK["Task.Supervisor.start_child<br/>Konet.WebhookSupervisor"]
+    TASK -->|pool full| DROP["Logger.warning — dropped"]
     TASK --> SIG{"KONET_WEBHOOK_SECRET set?"}
     SIG -->|yes| HDR["x-konet-signature: sha256=hmac(body)"]
     SIG -->|no| PLAIN["no signature header"]
     HDR & PLAIN --> POST[":httpc.request(:post, …, timeout: 5000)"]
     POST -->|2xx| OK[":ok"]
-    POST -->|other / error| LOG["Logger.warning — no retry"]
+    POST -->|4xx except 408/429| REF["Logger.warning — not retried"]
+    POST -->|5xx · 408 · 429 · error| RETRY{"attempts left?"}
+    RETRY -->|yes| LATER["send_after(Konet.Webhooks, :retry, backoff)<br/>→ new task"]
+    RETRY -->|no| GIVEUP["Logger.warning — gave up"]
 ```

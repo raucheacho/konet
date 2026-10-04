@@ -18,7 +18,15 @@ services:
       KONET_JWT_SECRET: "${KONET_JWT_SECRET:?KONET_JWT_SECRET env var is required}"
       KONET_ANON_KEY: "${KONET_ANON_KEY:-}"
       KONET_SERVICE_KEY: "${KONET_SERVICE_KEY:-}"
-      KONET_STUDIO_PASSWORD: "${KONET_STUDIO_PASSWORD:-}"
+      # Required: without it the Studio is open to anyone who can reach the
+      # server. It used to default to empty, which published it on the
+      # reference deployment path.
+      KONET_STUDIO_PASSWORD: "${KONET_STUDIO_PASSWORD:?KONET_STUDIO_PASSWORD env var is required}"
+      # Where a secret rotated from the Studio is written and read back at boot.
+      # On the volume below, so a rotation survives a restart or a redeploy;
+      # without it a restart reverts to the old secret and locks out every
+      # client that stored the new keys.
+      KONET_SECRET_FILE: "${KONET_SECRET_FILE:-/data/jwt_secret}"
       KONET_ALLOWED_ORIGINS: "${KONET_ALLOWED_ORIGINS:-*}"
       KONET_RATE_LIMIT: "${KONET_RATE_LIMIT:-60}"
       KONET_CONN_RATE_LIMIT: "${KONET_CONN_RATE_LIMIT:-200}"
@@ -26,6 +34,9 @@ services:
       # own and would otherwise starve a talker's other events.
       KONET_RATE_LIMIT_BINARY: "${KONET_RATE_LIMIT_BINARY:-120}"
       KONET_FLOOR_MAX_HOLD_MS: "${KONET_FLOOR_MAX_HOLD_MS:-30000}"
+      # Members of one multiplex topic (all of them may send; the fan-out grows
+      # with the square of the count). 0 removes the ceiling.
+      KONET_MULTIPLEX_MAX_MEMBERS: "${KONET_MULTIPLEX_MAX_MEMBERS:-16}"
       # Set this when a reverse proxy terminates TLS in front (Coolify, Dokploy,
       # Traefik, Nginx). Without it every connection carries the proxy's IP and
       # KONET_CONN_RATE_LIMIT becomes one global budget — the deployment
@@ -40,6 +51,9 @@ services:
       KONET_LOG_BROADCASTS: "${KONET_LOG_BROADCASTS:-true}"
       KONET_WEBHOOK_URL: "${KONET_WEBHOOK_URL:-}"
       KONET_WEBHOOK_SECRET: "${KONET_WEBHOOK_SECRET:-}"
+      KONET_WEBHOOK_RETRIES: "${KONET_WEBHOOK_RETRIES:-3}"
+      # Deliveries in flight at once; beyond it an event is dropped and logged.
+      KONET_WEBHOOK_CONCURRENCY: "${KONET_WEBHOOK_CONCURRENCY:-50}"
       SECRET_KEY_BASE: "${SECRET_KEY_BASE:?SECRET_KEY_BASE env var is required}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4000/api/health"]
@@ -47,8 +61,13 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    volumes:
+      - konet-data:/data
     networks:
       - konet
+
+volumes:
+  konet-data:
 
 networks:
   konet:

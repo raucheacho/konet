@@ -63,6 +63,9 @@ channel.on('a', (data: Uint8Array) => { /* an incoming frame */ })
 await channel.acquireFloor()
 channel.sendBinary('a', frame)
 await channel.releaseFloor()
+
+// a call: both sides send at once, no floor
+const call = client.channel('room:call-7', { binaryMode: 'multiplex' })
 ```
 
 Encoding the audio itself is a separate problem — React Native has no Opus —

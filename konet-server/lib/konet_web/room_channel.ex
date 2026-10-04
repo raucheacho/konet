@@ -3,18 +3,80 @@ defmodule KonetWeb.RoomChannel do
   alias Konet.{Presence, Metrics, ChannelRegistry, RateLimiter}
 
   @impl true
-  def join("room:" <> room_id, _params, socket) do
+  def join("room:" <> room_id, params, socket) do
     topic = "room:" <> room_id
 
-    if authorized?(socket, topic) do
+    with {:ok, requested} <- parse_binary_mode(params),
+         :ok <- authorize(socket, topic, room_id),
+         {:ok, prefix} <- sender_prefix(requested, socket.assigns.user_id),
+         {:ok, mode} <- claim_binary_mode(topic, requested) do
       send(self(), {:after_join, room_id})
       ChannelRegistry.channel_joined(room_id)
       Konet.Webhooks.emit("member_joined", %{room: room_id, user: socket.assigns.user_id})
       log_event("join", %{room: room_id, user: socket.assigns.user_id})
-      {:ok, assign(socket, :room_id, room_id)}
+
+      socket =
+        socket
+        |> assign(:room_id, room_id)
+        |> assign(:binary_mode, mode)
+        |> assign(:sender_prefix, prefix)
+
+      {:ok, %{binary_mode: Atom.to_string(mode)}, socket}
+    end
+  end
+
+  # The binary mode is a join parameter rather than an event because it cannot
+  # change under a member: see Konet.BinaryMode for why it belongs to the topic.
+  defp parse_binary_mode(params) do
+    case Konet.BinaryMode.parse((is_map(params) && params["binary_mode"]) || nil) do
+      {:ok, mode} -> {:ok, mode}
+      {:error, :invalid} -> {:error, %{reason: "invalid_binary_mode"}}
+    end
+  end
+
+  # In :multiplex mode every frame is relayed with its sender in front:
+  #
+  #     <<byte_size(user_id)::8, user_id::binary, data::binary>>
+  #
+  # With several members sending at once, a receiver has nothing else to tell
+  # the streams apart by — in :exclusive mode the floor holder is the sender,
+  # in :multiplex there is no holder. The server writes it rather than the
+  # client because only the server knows it for certain: it is the token's
+  # `sub`, which a client cannot forge, where an id the client put in its own
+  # data could be anyone's.
+  #
+  # Built once here so the hot path only concatenates. One length byte, like
+  # every size in Phoenix's framing, so an id over 255 bytes cannot be carried
+  # and such a member is refused at join rather than relayed truncated.
+  defp sender_prefix(:exclusive, _user_id), do: {:ok, nil}
+
+  defp sender_prefix(:multiplex, user_id) when is_binary(user_id) and byte_size(user_id) <= 255,
+    do: {:ok, <<byte_size(user_id)::8, user_id::binary>>}
+
+  defp sender_prefix(:multiplex, _user_id), do: {:error, %{reason: "invalid_sender_id"}}
+
+  defp authorize(socket, topic, room_id) do
+    if authorized?(socket, topic) do
+      :ok
     else
       log_event("join_denied", %{room: room_id, user: socket.assigns.user_id})
       {:error, %{reason: "unauthorized"}}
+    end
+  end
+
+  defp claim_binary_mode(topic, requested) do
+    case Konet.BinaryMode.claim(topic, requested) do
+      {:ok, mode} ->
+        {:ok, mode}
+
+      # Named so the client can tell a misconfigured room from a refused token,
+      # and with the mode in force so it can say which side is wrong.
+      {:error, {:mismatch, current}} ->
+        {:error, %{reason: "binary_mode_mismatch", binary_mode: Atom.to_string(current)}}
+
+      # The ceiling is in the reply so a client can say why, not just that.
+      {:error, {:full, max}} ->
+        {:error, %{reason: "topic_full", max_members: max}}
     end
   end
 
@@ -72,7 +134,9 @@ defmodule KonetWeb.RoomChannel do
         # high-throughput deployment can turn it off with
         # KONET_LOG_BROADCASTS=false without losing the low-rate join/leave and
         # floor entries.
-        if log_broadcasts?(), do: log_event("broadcast", %{room: socket.assigns.room_id, event: event})
+        if log_broadcasts?(),
+          do: log_event("broadcast", %{room: socket.assigns.room_id, event: event})
+
         broadcast!(socket, event, payload)
         {:noreply, socket}
 
@@ -90,6 +154,14 @@ defmodule KonetWeb.RoomChannel do
   # Half-duplex media needs an arbiter, and the channel process is the only
   # place where "who is sending" can be decided without an extra round trip:
   # the client that presses gets its answer on the connection it already has.
+  #
+  # Only in :exclusive mode. A :multiplex topic has no floor at all — not one
+  # that is always granted, but none: Konet.Floor is never written for it, so
+  # no holder is announced, swept, or reported to the webhook.
+
+  def handle_in("konet:floor_" <> _, _payload, %{assigns: %{binary_mode: :multiplex}} = socket) do
+    {:reply, {:error, %{reason: "floor_disabled", binary_mode: "multiplex"}}, socket}
+  end
 
   def handle_in("konet:floor_acquire", _payload, socket) do
     topic = socket.topic
@@ -99,7 +171,8 @@ defmodule KonetWeb.RoomChannel do
       {:ok, ^user_id, since} ->
         # Announced to everyone, including the holder: subscribers need to know
         # a stream is starting before its first frame arrives, and the holder
-        # needs the same id to stamp its frames with.
+        # sees the same `holder` and `since` as everyone else. Exclusive frames
+        # carry no holder id; this announcement is what names their sender.
         #
         # `since` is the moment the floor was actually taken, reported by Floor
         # itself — not "now". They differ on a duplicate press, and a listener
@@ -131,36 +204,39 @@ defmodule KonetWeb.RoomChannel do
 
   # ── Trames binaires ─────────────────────────────────────────────────────
   #
-  # The hot path. At 20 ms Opus frames this runs 50 times a second per talker,
-  # so it does the least possible: check the floor, fan out. Deliberately
-  # absent, and each for a reason —
+  # The hot path. At 20 ms frames this runs 50 times a second per sender, so
+  # it does the least possible: check the right to send, fan out. That right is
+  # the floor in :exclusive mode and membership in :multiplex mode, read from
+  # the mode cached at join — no table lookup at all for the latter.
+  # Deliberately absent, and each for a reason —
   #
   #   * History: buffering 50 frames a second would blow up the ETS table for
   #     a replay nobody can use. Recording audio is a durable-storage problem,
   #     not a replay-buffer one.
   #   * Per-frame logging: this is exactly the hot-path logging the audit
   #     flagged, and audio is where it would first hurt.
-  #   * Rate limiting per message: the floor already allows a single sender per
-  #     topic, so the budget below only exists to stop one client flooding.
+  #   * Rate limiting per message: the budget below is per socket, so it stops
+  #     one client flooding. It does not bound a topic: in :multiplex mode every
+  #     member sends, and the fan-out grows with the square of the members.
   #
   # `broadcast!` with a {:binary, _} payload takes Phoenix's fastlane: the
   # frame is encoded once and written to every subscriber's socket without
   # passing through their channel processes.
   def handle_in(event, {:binary, data}, socket) do
-    if Konet.Floor.holds?(socket.topic, socket.assigns.user_id) do
+    if may_send_binary?(socket) do
       case RateLimiter.check_binary(socket.assigns.socket_id) do
         :ok ->
           Metrics.message_sent()
           # `broadcast_from!`, not `broadcast!`: sending a talker their own
           # audio back is echo, and on a phone it is echo at speaker volume.
-          broadcast_from!(socket, event, {:binary, data})
+          broadcast_from!(socket, event, {:binary, stamp(socket, data)})
           {:noreply, socket}
 
         {:error, :rate_limited} ->
-          {:reply, {:error, %{reason: "rate_limited"}}, socket}
+          refuse_binary(socket, "rate_limited")
       end
     else
-      {:reply, {:error, %{reason: "floor_required"}}, socket}
+      refuse_binary(socket, "floor_required")
     end
   end
 
@@ -177,17 +253,54 @@ defmodule KonetWeb.RoomChannel do
 
   defp unsupported_reason(_payload), do: "unsupported_event"
 
+  # A refused frame gets a reply — the only way its sender can learn it was
+  # dropped — but at most one per reason per second. A client that keeps
+  # sending after losing the floor, or past its budget, would otherwise get
+  # fifty error replies a second back, doubling the traffic it is causing.
+  # The SDKs surface these replies as a `binary_error` event.
+  @refusal_interval_ms 1_000
+
+  defp refuse_binary(socket, reason) do
+    now = System.monotonic_time(:millisecond)
+    refused = Map.get(socket.assigns, :binary_refused_at, %{})
+
+    case refused do
+      %{^reason => last} when now - last < @refusal_interval_ms ->
+        {:noreply, socket}
+
+      _ ->
+        socket = assign(socket, :binary_refused_at, Map.put(refused, reason, now))
+        {:reply, {:error, %{reason: reason}}, socket}
+    end
+  end
+
+  defp stamp(%{assigns: %{sender_prefix: nil}}, data), do: data
+  defp stamp(%{assigns: %{sender_prefix: prefix}}, data), do: <<prefix::binary, data::binary>>
+
+  defp may_send_binary?(%{assigns: %{binary_mode: :multiplex}}), do: true
+  defp may_send_binary?(socket), do: Konet.Floor.holds?(socket.topic, socket.assigns.user_id)
+
   defp now_ms, do: System.system_time(:millisecond)
 
   @impl true
+  #
+  # Phoenix calls terminate/2 for a join that was refused too. Such a channel
+  # never joined anything — no room_id was assigned — so there is nothing to
+  # release, and announcing it used to emit a `member_left` webhook with
+  # `room: nil` and decrement a registry entry named "unknown".
+  def terminate(_reason, %{assigns: assigns}) when not is_map_key(assigns, :room_id), do: :ok
+
   def terminate(_reason, socket) do
     # A holder who disappears mid-sentence — the tunnel case, and the common
     # one — must not leave the topic muted. Konet.Floor's monitor would free
     # the entry anyway; releasing here also tells the others to stop showing
     # someone as talking.
+    #
+    # Konet.BinaryMode needs no such call: it monitors this process.
     user_id = socket.assigns.user_id
 
-    if socket.assigns[:room_id] && Konet.Floor.release(socket.topic, user_id) == :ok do
+    if socket.assigns[:binary_mode] == :exclusive &&
+         Konet.Floor.release(socket.topic, user_id) == :ok do
       broadcast!(socket, "konet:floor", %{holder: nil, since: now_ms()})
     end
 
@@ -195,14 +308,14 @@ defmodule KonetWeb.RoomChannel do
     # with the per-*socket* increment in UserSocket made the gauge drift to zero
     # on any client that joined more than one room. Konet.Metrics monitors the
     # socket process instead.
-    ChannelRegistry.channel_left(socket.assigns[:room_id] || "unknown")
+    ChannelRegistry.channel_left(socket.assigns.room_id)
 
     Konet.Webhooks.emit("member_left", %{
-      room: socket.assigns[:room_id],
+      room: socket.assigns.room_id,
       user: socket.assigns.user_id
     })
 
-    log_event("leave", %{room: socket.assigns[:room_id], user: socket.assigns.user_id})
+    log_event("leave", %{room: socket.assigns.room_id, user: socket.assigns.user_id})
     :ok
   end
 
