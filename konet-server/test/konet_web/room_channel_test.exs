@@ -442,6 +442,9 @@ defmodule KonetWeb.RoomChannelTest do
 
       Konet.History.record("replay-test", "update", %{"v" => 1})
       Konet.History.record("replay-test", "update", %{"v" => 2})
+      # record/3 is a cast: drain it, or the join can read the buffer first and
+      # push no konet:history at all.
+      :sys.get_state(Konet.History)
 
       socket = connect_with(%{"sub" => "late"})
       {:ok, _, _socket} = subscribe_and_join(socket, "room:replay-test")

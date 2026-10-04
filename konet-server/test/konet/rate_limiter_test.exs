@@ -16,7 +16,9 @@ defmodule Konet.RateLimiterTest do
     Application.put_env(:konet, :rate_limit_connections, 1)
     on_exit(fn -> Application.delete_env(:konet, :rate_limit_connections) end)
 
-    ip = "10.0.0.#{System.unique_integer([:positive])}"
+    # Not "10.0.0.N": a small unique integer collided with the fixed 10.0.0.9
+    # of user_socket_test.exs, whose first connection was then rate limited.
+    ip = "rate-limiter-test-#{System.unique_integer([:positive])}"
 
     assert :ok = Konet.RateLimiter.check_connection(ip)
     assert {:error, :rate_limited} = Konet.RateLimiter.check_connection(ip)
