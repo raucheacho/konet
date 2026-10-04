@@ -3,6 +3,7 @@ package konet
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -572,5 +573,83 @@ func TestExclusiveFramesAreLeftUntouched(t *testing.T) {
 	// The leading 5 is data here, not a length: exclusive frames have no prefix.
 	if string(data) != string([]byte{5, 1, 2}) || sender != "" {
 		t.Fatalf("got %v from %q", data, sender)
+	}
+}
+
+// ── Backoff and status ─────────────────────────────────────────────────────
+
+func TestReconnectDelayJittersHalfOfEachStep(t *testing.T) {
+	cases := []struct {
+		attempt int
+		random  float64
+		want    time.Duration
+	}{
+		{0, 0, 500 * time.Millisecond},
+		{0, 1, time.Second},
+		{2, 0.5, 3 * time.Second},
+		{20, 1, 30 * time.Second},  // ceiling
+		{20, 0, 15 * time.Second},  // half the ceiling at least
+		{200, 1, 30 * time.Second}, // overflowing step still capped
+	}
+	for _, tc := range cases {
+		got := reconnectDelay(time.Second, tc.attempt, func() float64 { return tc.random })
+		if got != tc.want {
+			t.Errorf("attempt %d random %v: got %v, want %v", tc.attempt, tc.random, got, tc.want)
+		}
+	}
+}
+
+func TestStatusReportsEachStepIncludingGivingUp(t *testing.T) {
+	server := newFakeServer(t)
+	server.dropFirstJoin = true
+
+	var mu sync.Mutex
+	var states []StatusState
+	opts := testOptions()
+	opts.MaxReconnectTries = 2
+	opts.OnStatus = func(s Status) {
+		mu.Lock()
+		states = append(states, s.State)
+		mu.Unlock()
+		if s.State == StatusReconnecting && (s.Attempt < 1 || s.Delay <= 0) {
+			t.Errorf("reconnecting status without attempt/delay: %+v", s)
+		}
+	}
+
+	ctx := context.Background()
+	client := New(server.wsURL(), "tok", opts)
+	if err := client.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The join is answered then the socket dropped; with the server gone, both
+	// retries fail and the client gives up.
+	server.Close()
+	_ = client.Channel("room:lobby").Subscribe(ctx)
+
+	snapshot := func() []StatusState {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]StatusState{}, states...)
+	}
+	waitFor(t, "the client to give up", func() bool {
+		s := snapshot()
+		return len(s) > 0 && s[len(s)-1] == StatusFailed
+	})
+
+	want := []StatusState{
+		StatusConnecting, StatusConnected,
+		StatusReconnecting, StatusConnecting,
+		StatusReconnecting, StatusConnecting,
+		StatusFailed,
+	}
+	if got := snapshot(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+
+	client.Disconnect()
+	client.Disconnect()
+	if got := snapshot(); got[len(got)-1] != StatusDisconnected || len(got) != len(want)+1 {
+		t.Fatalf("after Disconnect twice: %v", got)
 	}
 }

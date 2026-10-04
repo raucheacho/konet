@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { KonetClient } from "../client.js";
+import { KonetClient, reconnectDelay } from "../client.js";
+import type { ConnectionStatus } from "../client.js";
 import type { KonetSendError } from "../channel.js";
 import { MockWebSocket, replyTo, WireFrame } from "./mock-socket.js";
 
@@ -433,5 +434,82 @@ describe("binary mode", () => {
     expect(client.channel("room:call-2")).toBe(channel);
     expect(client.channel("room:call-2", { binaryMode: "multiplex" })).toBe(channel);
     expect(() => client.channel("room:call-2", { binaryMode: "exclusive" })).toThrow(/multiplex/);
+  });
+});
+
+describe("reconnect backoff", () => {
+  it("keeps half of each step fixed and jitters the other half", () => {
+    // Without jitter every client dropped by a restart came back in lockstep.
+    expect(reconnectDelay(1_000, 0, () => 0)).toBe(500);
+    expect(reconnectDelay(1_000, 0, () => 1)).toBe(1_000);
+    expect(reconnectDelay(1_000, 2, () => 0.5)).toBe(3_000);
+  });
+
+  it("never exceeds the 30 s ceiling", () => {
+    expect(reconnectDelay(1_000, 20, () => 1)).toBe(30_000);
+    expect(reconnectDelay(1_000, 20, () => 0)).toBe(15_000);
+  });
+
+  it("spreads clients that dropped at the same moment", () => {
+    const delays = new Set(Array.from({ length: 20 }, () => reconnectDelay(1_000, 3)));
+    expect(delays.size).toBeGreaterThan(1);
+  });
+});
+
+describe("connection status", () => {
+  it("reports each step, including giving up", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", {
+      token: "kt_test",
+      maxReconnectAttempts: 1,
+    });
+    const seen: ConnectionStatus[] = [];
+    client.onStatus((status) => seen.push(status));
+
+    client.connect();
+    MockWebSocket.last().open();
+    MockWebSocket.last().drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    MockWebSocket.last().drop(); // the only retry fails too
+
+    expect(seen.map((s) => s.state)).toEqual([
+      "connecting",
+      "connected",
+      "reconnecting",
+      "connecting",
+      "failed",
+    ]);
+    const retry = seen[2] as Extract<ConnectionStatus, { state: "reconnecting" }>;
+    expect(retry.attempt).toBe(1);
+    expect(retry.delayMs).toBeGreaterThanOrEqual(500);
+    expect(retry.delayMs).toBeLessThanOrEqual(1_000);
+  });
+
+  it("reports an explicit disconnect, once, and stops reporting when removed", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    const seen: string[] = [];
+    const off = client.onStatus((status) => seen.push(status.state));
+
+    client.connect();
+    MockWebSocket.last().open();
+    client.disconnect();
+    client.disconnect();
+    expect(seen).toEqual(["connecting", "connected", "disconnected"]);
+
+    off();
+    client.connect();
+    expect(seen).toHaveLength(3);
+    client.disconnect();
+  });
+
+  it("does not let a failing handler break the connection", async () => {
+    const client = new KonetClient("ws://localhost:4000/socket", { token: "kt_test" });
+    client.onStatus(() => {
+      throw new Error("ui bug");
+    });
+
+    client.connect();
+    MockWebSocket.last().open();
+    expect(client.connected).toBe(true);
+    client.disconnect();
   });
 });

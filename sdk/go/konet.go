@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,6 +46,59 @@ type ClientOptions struct {
 	ReconnectDelay    time.Duration
 	MaxReconnectTries int
 	HTTPHeader        http.Header
+	// OnStatus, when set, is called on every change of connection status — to
+	// show "reconnecting…", or to learn that the client gave up. It runs on the
+	// client's own goroutine: return quickly, and do not call Connect or
+	// Disconnect from it.
+	OnStatus func(Status)
+}
+
+// StatusState is what the connection is doing.
+type StatusState string
+
+const (
+	// StatusConnecting: a socket is being opened.
+	StatusConnecting StatusState = "connecting"
+	// StatusConnected: it is open; channels are being re-joined.
+	StatusConnected StatusState = "connected"
+	// StatusReconnecting: it was lost, and attempt Attempt starts after Delay.
+	StatusReconnecting StatusState = "reconnecting"
+	// StatusDisconnected: Disconnect was called.
+	StatusDisconnected StatusState = "disconnected"
+	// StatusFailed: MaxReconnectTries were used up and the client stopped.
+	StatusFailed StatusState = "failed"
+)
+
+// Status is reported to ClientOptions.OnStatus. Attempt and Delay are only set
+// for StatusReconnecting.
+type Status struct {
+	State   StatusState
+	Attempt int
+	Delay   time.Duration
+}
+
+func (c *Client) emitStatus(s Status) {
+	if c.opts.OnStatus == nil {
+		return
+	}
+	// A failing UI callback must not take the connection logic with it.
+	defer func() { _ = recover() }()
+	c.opts.OnStatus(s)
+}
+
+// maxReconnectDelay is the ceiling on one reconnect delay.
+const maxReconnectDelay = 30 * time.Second
+
+// reconnectDelay is exponential backoff with "equal jitter": half the step is
+// fixed, half is random. Without the random half, every client dropped by a
+// server restart came back at the same 1 s, 2 s, 4 s — together, against a cold
+// server and a per-IP connection budget. Never above the un-jittered step.
+func reconnectDelay(base time.Duration, attempt int, random func() float64) time.Duration {
+	step := time.Duration(float64(base) * math.Pow(2, float64(attempt)))
+	if step > maxReconnectDelay || step <= 0 {
+		step = maxReconnectDelay
+	}
+	return step/2 + time.Duration(random()*float64(step/2))
 }
 
 func defaultOptions() ClientOptions {
@@ -95,10 +149,12 @@ func (c *Client) dial(ctx context.Context) (*websocket.Conn, error) {
 
 // Connect opens the WebSocket connection and starts the read loop.
 func (c *Client) Connect(ctx context.Context) error {
+	c.emitStatus(Status{State: StatusConnecting})
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return err
 	}
+	c.emitStatus(Status{State: StatusConnected})
 
 	c.mu.Lock()
 	c.conn = conn
@@ -116,7 +172,14 @@ func (c *Client) Connect(ctx context.Context) error {
 
 // Disconnect closes the connection gracefully.
 func (c *Client) Disconnect() {
-	c.closeOnce.Do(func() { close(c.done) })
+	first := false
+	c.closeOnce.Do(func() {
+		close(c.done)
+		first = true
+	})
+	if first {
+		defer c.emitStatus(Status{State: StatusDisconnected})
+	}
 
 	c.mu.Lock()
 	conn := c.conn
@@ -408,10 +471,8 @@ func (c *Client) reconnect(ctx context.Context) bool {
 	}
 
 	for attempt := 0; attempt < c.opts.MaxReconnectTries; attempt++ {
-		delay := time.Duration(float64(c.opts.ReconnectDelay) * math.Pow(2, float64(attempt)))
-		if delay > 30*time.Second {
-			delay = 30 * time.Second
-		}
+		delay := reconnectDelay(c.opts.ReconnectDelay, attempt, rand.Float64)
+		c.emitStatus(Status{State: StatusReconnecting, Attempt: attempt + 1, Delay: delay})
 
 		timer := time.NewTimer(delay)
 		select {
@@ -424,6 +485,7 @@ func (c *Client) reconnect(ctx context.Context) bool {
 		case <-timer.C:
 		}
 
+		c.emitStatus(Status{State: StatusConnecting})
 		conn, err := c.dial(ctx)
 		if err != nil {
 			continue
@@ -432,6 +494,7 @@ func (c *Client) reconnect(ctx context.Context) bool {
 		c.mu.Lock()
 		c.conn = conn
 		c.mu.Unlock()
+		c.emitStatus(Status{State: StatusConnected})
 
 		// The server knows nothing about the topics this client had joined on
 		// the previous socket. Re-issue phx_join — but from a goroutine, not
@@ -441,6 +504,9 @@ func (c *Client) reconnect(ctx context.Context) bool {
 		return true
 	}
 
+	// Used to end silently: an application had no way to know the client had
+	// stopped trying, short of polling Connected forever.
+	c.emitStatus(Status{State: StatusFailed})
 	return false
 }
 

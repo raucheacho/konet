@@ -14,6 +14,7 @@ export type { AppStateLike, AppStateSubscription } from "./app-state.js";
 export { KonetClient, Channel, Presence } from "@raucheacho/konet-js";
 export type {
   KonetClientOptions,
+  ConnectionStatus,
   BinaryMode,
   ChannelOptions,
   ChannelState,

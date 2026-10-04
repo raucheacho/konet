@@ -53,8 +53,14 @@ client := konet.New(url, token, konet.ClientOptions{
     ReconnectDelay:    time.Second,
     MaxReconnectTries: 10,
     HTTPHeader:        nil, // extra headers for the WS handshake
+    // StatusConnecting, StatusConnected, StatusReconnecting (s.Attempt, s.Delay),
+    // StatusDisconnected, StatusFailed. Runs on the client's goroutine.
+    OnStatus: func(s konet.Status) {},
 })
 ```
+
+Reconnect delays are exponential with jitter (between half and all of each
+step, capped at 30 s), so clients dropped together do not come back in lockstep.
 
 Decode a payload into a struct with `konet.MarshalPayload(payload, &target)`.
 

@@ -4,10 +4,12 @@ konet — Python SDK for Konet realtime infrastructure.
 Quick start::
 
     import asyncio
+    import os
     from konet import KonetClient
 
     async def main():
-        async with KonetClient("ws://localhost:4000/socket", token="kt_anon_...") as client:
+        # The anon key printed by `konet keys generate` (a JWT).
+        async with KonetClient("ws://localhost:4000/socket", token=os.environ["KONET_ANON_KEY"]) as client:
             channel = client.channel("room:lobby")
             await channel.subscribe()
 
@@ -18,8 +20,8 @@ Quick start::
     asyncio.run(main())
 """
 
-from .client import KonetClient
+from .client import ConnectionStatus, KonetClient
 from .channel import BinaryMode, Channel
 
-__all__ = ["KonetClient", "Channel", "BinaryMode"]
+__all__ = ["KonetClient", "Channel", "BinaryMode", "ConnectionStatus"]
 __version__ = "0.1.0"

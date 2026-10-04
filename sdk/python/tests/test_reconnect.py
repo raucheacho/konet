@@ -357,3 +357,60 @@ def test_channel_refuses_a_different_mode_for_an_existing_topic():
         client.channel("room:call", binary_mode="exclusive")
     with pytest.raises(ValueError, match="unknown"):
         client.channel("room:other", binary_mode="duplex")
+
+
+# ── Backoff and status ─────────────────────────────────────────────────────
+
+
+def test_reconnect_delay_jitters_half_of_each_step():
+    from konet.client import reconnect_delay
+
+    assert reconnect_delay(1.0, 0, lambda: 0.0) == 0.5
+    assert reconnect_delay(1.0, 0, lambda: 1.0) == 1.0
+    assert reconnect_delay(1.0, 2, lambda: 0.5) == 3.0
+    assert reconnect_delay(1.0, 20, lambda: 1.0) == 30.0  # ceiling
+    assert reconnect_delay(1.0, 20, lambda: 0.0) == 15.0
+    # Clients dropped at the same moment no longer come back together.
+    assert len({reconnect_delay(1.0, 3) for _ in range(20)}) > 1
+
+
+def test_status_reports_each_step_including_giving_up(monkeypatch):
+    async def scenario():
+        transport = FakeTransport()
+        seen = []
+
+        import konet.client as client_module
+
+        monkeypatch.setattr(client_module.websockets, "connect", transport)
+        client = KonetClient("ws://test/socket", token="tok", reconnect_delay=0.001,
+                             max_reconnect_tries=2, heartbeat_interval=3600.0)
+        off = client.on_status(seen.append)
+        # A failing handler must not break anything.
+        client.on_status(lambda _s: 1 / 0)
+
+        await client.connect()
+        transport.fail_times = 99
+        transport.current.drop()
+
+        for _ in range(400):
+            await asyncio.sleep(0.005)
+            if seen and seen[-1].state == "failed":
+                break
+
+        assert [s.state for s in seen] == [
+            "connecting", "connected",
+            "reconnecting", "connecting",
+            "reconnecting", "connecting",
+            "failed",
+        ]
+        assert seen[2].attempt == 1 and 0.0005 <= seen[2].delay <= 0.001
+
+        await client.disconnect()
+        assert seen[-1].state == "disconnected"
+
+        off()
+        count = len(seen)
+        await client.disconnect()
+        assert len(seen) == count
+
+    run(scenario())

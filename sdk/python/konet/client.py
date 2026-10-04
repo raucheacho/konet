@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+import random
+from dataclasses import dataclass
+from typing import Any, Callable, Literal
 from urllib.parse import urlencode
 
 import websockets
@@ -12,13 +14,47 @@ from .binary import BROADCAST, PUSH, decode_server_frame, encode_push
 from .channel import BinaryMode, Channel
 
 
+#: What the connection is doing, as reported to :meth:`KonetClient.on_status`.
+StatusState = Literal["connecting", "connected", "reconnecting", "disconnected", "failed"]
+
+#: Ceiling on one reconnect delay, in seconds.
+MAX_RECONNECT_DELAY = 30.0
+
+
+@dataclass(frozen=True)
+class ConnectionStatus:
+    """A change of connection status.
+
+    ``connecting``: a socket is being opened. ``connected``: it is open.
+    ``reconnecting``: it was lost, and attempt ``attempt`` starts in ``delay``
+    seconds. ``disconnected``: :meth:`KonetClient.disconnect` was called.
+    ``failed``: ``max_reconnect_tries`` were used up and the client stopped.
+    """
+
+    state: StatusState
+    attempt: int = 0
+    delay: float = 0.0
+
+
+def reconnect_delay(base: float, attempt: int, rand: Callable[[], float] = random.random) -> float:
+    """Exponential backoff with "equal jitter": half the step fixed, half random.
+
+    Without the random half, every client dropped by a server restart came back
+    at the same 1 s, 2 s, 4 s — together, against a cold server and a per-IP
+    connection budget. Never above the un-jittered step.
+    """
+    step = min(base * (2 ** attempt), MAX_RECONNECT_DELAY)
+    return step / 2 + rand() * (step / 2)
+
+
 class KonetClient:
     """
     Async Konet client.
 
     Usage::
 
-        async with KonetClient("ws://localhost:4000/socket", token="kt_anon_...") as client:
+        # The anon key printed by `konet keys generate` (a JWT).
+        async with KonetClient("ws://localhost:4000/socket", token=os.environ["KONET_ANON_KEY"]) as client:
             channel = client.channel("room:lobby")
             await channel.subscribe()
             channel.on("message", lambda p: print(p))
@@ -52,6 +88,31 @@ class KonetClient:
         self._tasks: list[asyncio.Task] = []
         self._rejoin_task: asyncio.Task | None = None
         self._pending_heartbeat_ref: str | None = None
+        self._status_handlers: list[Callable[[ConnectionStatus], None]] = []
+
+    def on_status(self, handler: Callable[[ConnectionStatus], None]) -> Callable[[], None]:
+        """Call ``handler`` on every change of connection status.
+
+        To show "reconnecting…", or to learn that the client gave up. Called
+        synchronously from the client's own tasks: return quickly. Returns a
+        callable that removes it.
+        """
+        self._status_handlers.append(handler)
+
+        def off() -> None:
+            try:
+                self._status_handlers.remove(handler)
+            except ValueError:
+                pass  # already removed
+
+        return off
+
+    def _emit_status(self, status: ConnectionStatus) -> None:
+        for handler in list(self._status_handlers):
+            try:
+                handler(status)
+            except Exception:
+                pass  # a failing UI callback must not take the connection with it
 
     async def __aenter__(self) -> "KonetClient":
         await self.connect()
@@ -73,9 +134,11 @@ class KonetClient:
         return f"{base}/websocket?{params}"
 
     async def connect(self) -> None:
+        self._emit_status(ConnectionStatus("connecting"))
         self._ws = await websockets.connect(self._websocket_url())
         self._connected = True
         self._pending_heartbeat_ref = None
+        self._emit_status(ConnectionStatus("connected"))
 
         self._tasks = [
             asyncio.create_task(self._read_loop()),
@@ -83,7 +146,10 @@ class KonetClient:
         ]
 
     async def disconnect(self) -> None:
+        was_active = self._connected or self._ws is not None or bool(self._tasks)
         self._connected = False
+        if was_active:
+            self._emit_status(ConnectionStatus("disconnected"))
 
         for task in self._tasks:
             task.cancel()
@@ -279,17 +345,20 @@ class KonetClient:
             if not self._connected:
                 return False
 
-            delay = min(self._reconnect_delay * (2 ** attempt), 30.0)
+            delay = reconnect_delay(self._reconnect_delay, attempt)
+            self._emit_status(ConnectionStatus("reconnecting", attempt + 1, delay))
             await asyncio.sleep(delay)
 
             if not self._connected:
                 return False
 
+            self._emit_status(ConnectionStatus("connecting"))
             try:
                 self._ws = await websockets.connect(self._websocket_url())
             except Exception:
                 self._ws = None
                 continue
+            self._emit_status(ConnectionStatus("connected"))
 
             # The server knows nothing about the topics this client had joined
             # on the previous socket. Re-issue phx_join — but from a task, not
@@ -300,7 +369,10 @@ class KonetClient:
             self._rejoin_task = asyncio.create_task(self._rejoin_channels())
             return True
 
+        # Used to end silently: an application had no way to know the client
+        # had stopped trying, short of polling `connected` forever.
         self._connected = False
+        self._emit_status(ConnectionStatus("failed"))
         return False
 
     async def _rejoin_channels(self) -> None:
