@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -32,7 +33,9 @@ func (c *Client) Channels() (map[string]any, error) {
 }
 
 func (c *Client) Presence(channel string) (map[string]any, error) {
-	return c.get(fmt.Sprintf("/api/presence/%s", channel), true)
+	// Escaped as one path segment: a channel name containing "/", "?" or "#"
+	// used to change which route was hit, or cut the path short.
+	return c.get("/api/presence/"+url.PathEscape(channel), true)
 }
 
 func (c *Client) Metrics() (map[string]any, error) {
