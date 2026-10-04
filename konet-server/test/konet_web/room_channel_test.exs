@@ -44,6 +44,18 @@ defmodule KonetWeb.RoomChannelTest do
       assert {:error, %{reason: "unauthorized"}} = subscribe_and_join(socket, "room:other")
     end
 
+    test "a refused join is not reported as a leave" do
+      # Phoenix runs terminate/2 for a refused join as well; it used to log a
+      # `leave` (and emit a `member_left` webhook) with `room: nil`.
+      Phoenix.PubSub.subscribe(Konet.PubSub, "studio:logs")
+      socket = connect_with(%{"sub" => "refused", "channels" => ["room:allowed"]})
+
+      assert {:error, %{reason: "unauthorized"}} = subscribe_and_join(socket, "room:refused")
+
+      assert_receive %{type: "join_denied", data: %{user: "refused"}}
+      refute_receive %{type: "leave", data: %{user: "refused"}}, 300
+    end
+
     test "trailing wildcard grants a namespace" do
       socket = connect_with(%{"sub" => "ns", "channels" => ["room:user-42:*"]})
       assert {:ok, _, _socket} = subscribe_and_join(socket, "room:user-42:inbox")

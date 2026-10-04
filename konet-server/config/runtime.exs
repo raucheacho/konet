@@ -101,7 +101,9 @@ if config_env() == :prod do
     webhook_url: System.get_env("KONET_WEBHOOK_URL"),
     webhook_secret: System.get_env("KONET_WEBHOOK_SECRET"),
     # Total attempts per event, not extra ones. 1 disables retrying.
-    webhook_retries: parse_int.("KONET_WEBHOOK_RETRIES", 3)
+    webhook_retries: parse_int.("KONET_WEBHOOK_RETRIES", 3),
+    # Deliveries in flight at once; beyond it an event is dropped and logged.
+    webhook_concurrency: parse_int.("KONET_WEBHOOK_CONCURRENCY", 50)
 end
 
 if config_env() == :dev do
@@ -174,5 +176,7 @@ if config_env() == :dev do
     webhook_url: System.get_env("KONET_WEBHOOK_URL"),
     webhook_secret: System.get_env("KONET_WEBHOOK_SECRET"),
     # Total attempts per event, not extra ones. 1 disables retrying.
-    webhook_retries: parse_int.("KONET_WEBHOOK_RETRIES", 3)
+    webhook_retries: parse_int.("KONET_WEBHOOK_RETRIES", 3),
+    # Deliveries in flight at once; beyond it an event is dropped and logged.
+    webhook_concurrency: parse_int.("KONET_WEBHOOK_CONCURRENCY", 50)
 end

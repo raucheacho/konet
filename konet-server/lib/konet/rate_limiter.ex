@@ -12,13 +12,13 @@ defmodule Konet.RateLimiter do
   end
 
   def check_connection(ip) do
-    key = "conn:#{ip}:#{minute()}"
+    key = {:conn, ip, minute()}
     count = :ets.update_counter(@table, key, {2, 1}, {key, 0})
     if count <= max_connections_per_minute(), do: :ok, else: {:error, :rate_limited}
   end
 
   def check_message(socket_id) do
-    key = "msg:#{socket_id}:#{second()}"
+    key = {:msg, socket_id, second()}
     count = :ets.update_counter(@table, key, {2, 1}, {key, 0})
     if count <= max_messages_per_second(), do: :ok, else: {:error, :rate_limited}
   end
@@ -30,7 +30,7 @@ defmodule Konet.RateLimiter do
   # :exclusive topic the floor also bounds the topic to one sender; in a
   # :multiplex topic nothing does, by design.
   def check_binary(socket_id) do
-    key = "bin:#{socket_id}:#{second()}"
+    key = {:bin, socket_id, second()}
     count = :ets.update_counter(@table, key, {2, 1}, {key, 0})
     if count <= max_binary_per_second(), do: :ok, else: {:error, :rate_limited}
   end
@@ -51,9 +51,21 @@ defmodule Konet.RateLimiter do
     {:ok, %{}}
   end
 
+  # Only windows that are over are deleted. Emptying the whole table, as this
+  # used to, reset whatever window was current at that instant: a client at its
+  # limit got a fresh budget mid-window, so twice the limit could pass. The keys
+  # are tuples so the window can be matched on.
   @impl true
   def handle_info(:cleanup, state) do
-    :ets.delete_all_objects(@table)
+    minute = minute()
+    second = second()
+
+    :ets.select_delete(@table, [
+      {{{:conn, :_, :"$1"}, :_}, [{:<, :"$1", minute}], [true]},
+      {{{:msg, :_, :"$1"}, :_}, [{:<, :"$1", second}], [true]},
+      {{{:bin, :_, :"$1"}, :_}, [{:<, :"$1", second}], [true]}
+    ])
+
     schedule_cleanup()
     {:noreply, state}
   end

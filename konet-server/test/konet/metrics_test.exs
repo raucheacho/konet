@@ -109,4 +109,23 @@ defmodule Konet.MetricsTest do
 
     assert Metrics.get().messages_total == before + 2
   end
+
+  test "counting a message never waits on the Metrics process" do
+    # message_sent/0 runs on every binary frame. It used to be a cast to this
+    # one GenServer; it must not touch it at all.
+    before = Metrics.get().messages_total
+    :sys.suspend(Metrics)
+
+    try do
+      task = Task.async(fn -> for _ <- 1..3, do: Metrics.message_sent() end)
+      assert Task.yield(task, 500), "message_sent/0 blocked on a suspended Metrics"
+      assert [{:messages_total, n}] = :ets.lookup(:konet_metrics, :messages_total)
+      assert n == before + 3
+    after
+      :sys.resume(Metrics)
+    end
+
+    {:message_queue_len, queued} = Process.info(Process.whereis(Metrics), :message_queue_len)
+    assert queued <= 1, "only the 1 s rate tick may be waiting, not one message per frame"
+  end
 end

@@ -252,4 +252,67 @@ defmodule Konet.WebhooksTest do
 
     refute_receive {:webhook, _, _, _}, 300
   end
+
+  # Replaces the delivery pool with one of `max` slots for this test.
+  defp with_pool(max) do
+    swap_pool(max)
+    on_exit(fn -> swap_pool(50) end)
+  end
+
+  defp swap_pool(max) do
+    :ok = Supervisor.terminate_child(Konet.Supervisor, Konet.WebhookSupervisor)
+    :ok = Supervisor.delete_child(Konet.Supervisor, Konet.WebhookSupervisor)
+
+    {:ok, _} =
+      Supervisor.start_child(
+        Konet.Supervisor,
+        {Task.Supervisor, name: Konet.WebhookSupervisor, max_children: max}
+      )
+  end
+
+  test "drops and logs an event beyond the concurrency ceiling, rather than queueing it" do
+    with_pool(0)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        Konet.Webhooks.emit("member_joined", %{room: "lobby", user: "flood"})
+        refute_receive {:webhook, _, _, _}, 300
+      end)
+
+    assert log =~ "dropped"
+  end
+
+  test "a pending retry holds no slot: the next event still goes out" do
+    # One slot. The first event fails once, so its retry is pending for 500 ms;
+    # sleeping inside the task used to hold the only slot for all of it.
+    with_pool(1)
+    listener = start_listener(1, 500)
+    on_exit(fn -> stop_listener(listener) end)
+    use_listener(listener)
+
+    Konet.Webhooks.emit("member_joined", %{room: "lobby", user: "first"})
+    assert_receive {:webhook, 500, _, _}, 2000
+    Process.sleep(50)
+
+    Konet.Webhooks.emit("member_joined", %{room: "lobby", user: "second"})
+    assert_receive {:webhook, 200, _, body}, 400
+    assert Jason.decode!(body)["data"]["user"] == "second"
+
+    # And the retry of the first still arrives afterwards.
+    assert_receive {:webhook, 200, _, retried}, 2000
+    assert Jason.decode!(retried)["data"]["user"] == "first"
+  end
+
+  test "an https receiver is verified against the system trust store" do
+    opts = Konet.Webhooks.http_options_for("https://hooks.example.com/konet")
+    ssl = Keyword.fetch!(opts, :ssl)
+
+    assert ssl[:verify] == :verify_peer
+    assert is_list(ssl[:cacerts]) and ssl[:cacerts] != []
+    assert ssl[:server_name_indication] == ~c"hooks.example.com"
+    assert ssl[:customize_hostname_check]
+
+    # Plain http gets no TLS options at all.
+    refute Keyword.has_key?(Konet.Webhooks.http_options_for("http://127.0.0.1/h"), :ssl)
+  end
 end

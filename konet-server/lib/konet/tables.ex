@@ -28,7 +28,9 @@ defmodule Konet.Tables do
     {:konet_rl, [:named_table, :public, :set, {:write_concurrency, true}]},
     {:konet_floor, [:named_table, :public, :set, {:read_concurrency, true}]},
     {:konet_binary_mode, [:named_table, :public, :bag, {:read_concurrency, true}]},
-    {:konet_history, [:named_table, :public, :set, {:read_concurrency, true}]}
+    {:konet_history, [:named_table, :public, :set, {:read_concurrency, true}]},
+    {:konet_metrics,
+     [:named_table, :public, :set, {:write_concurrency, true}, {:decentralized_counters, true}]}
   ]
 
   def start_link(_opts) do

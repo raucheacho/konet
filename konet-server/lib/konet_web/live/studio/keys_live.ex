@@ -1,13 +1,24 @@
 defmodule KonetWeb.Studio.KeysLive do
   use KonetWeb, :live_view
 
+  # Without a Studio password this page is reachable by anyone who can reach
+  # the server, so it shows nothing that grants more than the anon key does:
+  # the service key is masked, the JWT secret cannot be revealed, and rotation
+  # — which locks every client out — is refused. It used to show all three in
+  # clear and rotate on a click.
   @impl true
   def mount(_params, _session, socket) do
+    locked = not Konet.Auth.studio_auth_enabled?()
+
+    service_key =
+      Application.get_env(:konet, :service_key) || get_key_from_env("KONET_SERVICE_KEY")
+
     {:ok,
      assign(socket,
        page_title: "Keys",
+       locked: locked,
        anon_key: Application.get_env(:konet, :anon_key) || get_key_from_env("KONET_ANON_KEY"),
-       service_key: Application.get_env(:konet, :service_key) || get_key_from_env("KONET_SERVICE_KEY"),
+       service_key: if(locked and service_key, do: mask_secret(service_key), else: service_key),
        jwt_secret: mask_secret(Application.get_env(:konet, :jwt_secret, "")),
        rotated: false,
        rotation: nil,
@@ -17,6 +28,11 @@ defmodule KonetWeb.Studio.KeysLive do
   end
 
   @impl true
+  def handle_event(event, _, %{assigns: %{locked: true}} = socket)
+      when event in ["rotate", "toggle_secret"] do
+    {:noreply, socket}
+  end
+
   def handle_event("rotate", _, socket) do
     %{jwt_secret: secret, anon_key: anon, service_key: service} = result = Konet.Auth.rotate!()
 
@@ -44,6 +60,14 @@ defmodule KonetWeb.Studio.KeysLive do
         rotating regenerates all three together. There's no way to invalidate just one of
         them without the others.
       </p>
+
+      <%= if @locked do %>
+        <div class="result-banner result-err">
+          The Studio has no password, so this page is open to anyone who can reach the server.
+          The service key and JWT secret are hidden and rotation is disabled until
+          <span class="mono">KONET_STUDIO_PASSWORD</span> is set.
+        </div>
+      <% end %>
 
       <%= if @rotated and @rotation.persisted do %>
         <div class="result-banner result-ok">
@@ -107,12 +131,14 @@ defmodule KonetWeb.Studio.KeysLive do
         <div class="key-header">
           <span class="key-label">JWT Secret</span>
           <span class="badge badge-red">secret</span>
-          <button class="btn btn-xs" phx-click="toggle_secret">
-            <%= if @show_secret, do: "Hide", else: "Show" %>
-          </button>
+          <%= unless @locked do %>
+            <button class="btn btn-xs" phx-click="toggle_secret">
+              <%= if @show_secret, do: "Hide", else: "Show" %>
+            </button>
+          <% end %>
         </div>
         <div class="key-value mono">
-          <%= if @show_secret do %>
+          <%= if @show_secret and not @locked do %>
             <%= Application.get_env(:konet, :jwt_secret, "not set") %>
           <% else %>
             <%= @jwt_secret %>
@@ -129,7 +155,7 @@ defmodule KonetWeb.Studio.KeysLive do
         </div>
       </div>
 
-      <button class="btn btn-danger" phx-click="rotate" data-confirm="Rotate the JWT secret? Every anon/service key issued so far will stop working immediately.">
+      <button class="btn btn-danger" phx-click="rotate" disabled={@locked} data-confirm="Rotate the JWT secret? Every anon/service key issued so far will stop working immediately.">
         Rotate Secret
       </button>
     </div>

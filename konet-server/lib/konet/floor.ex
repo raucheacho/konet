@@ -19,7 +19,8 @@ defmodule Konet.Floor do
     * **The floor is always released.** A holder whose channel process dies —
       a rider entering a tunnel mid-sentence — would otherwise mute the topic
       forever, so holders are monitored. A holder that simply stops talking
-      without releasing is swept once it exceeds `max_hold_ms`.
+      without releasing is swept once it exceeds `max_hold_ms`. Either way the
+      topic is told, with `konet:floor` and `holder: nil`.
 
   Each row carries two timestamps because they answer different questions: the
   monotonic one is what the sweep measures elapsed hold time against, and the
@@ -196,6 +197,7 @@ defmodule Konet.Floor do
           [{^topic, user_id, ^pid, _since, since_wall}] ->
             :ets.delete(@table, topic)
             emit_released(topic, user_id, since_wall, "disconnected")
+            announce_free(topic)
 
           _ ->
             :ok
@@ -227,6 +229,7 @@ defmodule Konet.Floor do
       Enum.reduce(expired, state, fn {topic, user_id, since_wall}, acc ->
         :ets.delete(@table, topic)
         emit_released(topic, user_id, since_wall, "expired")
+        announce_free(topic)
         drop_monitor(acc, topic)
       end)
 
@@ -259,6 +262,17 @@ defmodule Konet.Floor do
       held_ms: at - since_wall,
       reason: reason
     })
+  end
+
+  # The two releases this module decides on its own — a dead holder, an expired
+  # hold — are announced to the topic like any other. Only an explicit release
+  # and RoomChannel.terminate/2 used to announce, so a swept holder kept showing
+  # as talking to every listener until someone else pressed, and the holder
+  # itself learnt nothing: the floor_required reply to its next frame is one no
+  # SDK tracks. Through the endpoint, since this process has no socket; it
+  # reaches the holder too, which is how it learns.
+  defp announce_free(topic) do
+    KonetWeb.Endpoint.broadcast(topic, "konet:floor", %{holder: nil, since: now_wall_ms()})
   end
 
   defp schedule_sweep, do: Process.send_after(self(), :sweep, @sweep_every_ms)

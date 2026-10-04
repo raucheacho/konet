@@ -256,6 +256,13 @@ defmodule KonetWeb.RoomChannel do
   defp now_ms, do: System.system_time(:millisecond)
 
   @impl true
+  #
+  # Phoenix calls terminate/2 for a join that was refused too. Such a channel
+  # never joined anything — no room_id was assigned — so there is nothing to
+  # release, and announcing it used to emit a `member_left` webhook with
+  # `room: nil` and decrement a registry entry named "unknown".
+  def terminate(_reason, %{assigns: assigns}) when not is_map_key(assigns, :room_id), do: :ok
+
   def terminate(_reason, socket) do
     # A holder who disappears mid-sentence — the tunnel case, and the common
     # one — must not leave the topic muted. Konet.Floor's monitor would free
@@ -274,14 +281,14 @@ defmodule KonetWeb.RoomChannel do
     # with the per-*socket* increment in UserSocket made the gauge drift to zero
     # on any client that joined more than one room. Konet.Metrics monitors the
     # socket process instead.
-    ChannelRegistry.channel_left(socket.assigns[:room_id] || "unknown")
+    ChannelRegistry.channel_left(socket.assigns.room_id)
 
     Konet.Webhooks.emit("member_left", %{
-      room: socket.assigns[:room_id],
+      room: socket.assigns.room_id,
       user: socket.assigns.user_id
     })
 
-    log_event("leave", %{room: socket.assigns[:room_id], user: socket.assigns.user_id})
+    log_event("leave", %{room: socket.assigns.room_id, user: socket.assigns.user_id})
     :ok
   end
 
