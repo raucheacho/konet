@@ -19,7 +19,10 @@ runtime and core fixes apply without republishing this package.
 Konet releases every package in lockstep from a single git tag, so install both
 at the same version. The peer range is deliberately `>=` rather than a caret:
 `^0.2.0` would reject the 0.3.0 core that ships alongside a 0.3.0 of this
-package.
+package. Its floor is `0.6.0`, the first core with the binary modes, the
+`binary_error` event and `onStatus()` that this package re-exports — an older
+core would accept the import and then silently ignore `binaryMode`, never emit
+`binary_error`, and throw on `onStatus()`.
 
 No native module and no linking step: React Native provides the `WebSocket`
 global the core builds on.

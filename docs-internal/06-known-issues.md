@@ -74,7 +74,7 @@ unresolved path looks ordinary and reveals nothing).
 ### 4. Committed JS/RN package versions are meaningless — **by design**
 
 `sdk/js/package.json` and `sdk/react-native/package.json` both say `0.1.0` and
-are rewritten from the git tag at release. The RN `peerDependencies: ">=0.3.0"`
+are rewritten from the git tag at release. The RN `peerDependencies: ">=0.6.0"`
 is the only version constraint in those files that is real.
 
 Python and the server are no longer in this category: the Python release

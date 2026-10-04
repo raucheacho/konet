@@ -12,7 +12,7 @@ sdk/react-native/
 │   ├── native-client.ts  KonetNativeClient extends KonetClient
 │   ├── app-state.ts      lazy, guarded resolution of React Native's AppState
 │   └── __tests__/native-client.test.ts
-├── package.json          peerDeps: @raucheacho/konet-js >=0.3.0, react-native >=0.70
+├── package.json          peerDeps: @raucheacho/konet-js >=0.6.0, react-native >=0.70
 ├── tsconfig.json         paths → ../js/src/index.ts
 └── vitest.config.ts      alias → ../js/src/index.ts
 ```
@@ -91,12 +91,18 @@ conspire to make that work:
 | `vitest.config.ts` | the same alias, so tests run against the core's source |
 | `ci.yml` / `release-sdk-rn.yml` | `npm ci --legacy-peer-deps` — stops npm trying to fetch a peer that is right here |
 
-The peer range is `">=0.3.0"`, not `"^0.3.0"`, and the RN README explains why:
+The peer range is `">=0.6.0"`, not a caret, and the RN README explains why:
 `^0.2.0` would reject the 0.3.0 core that ships alongside a 0.3.0 of this
 package. Since every package is released in lockstep from one tag, a caret range
 would break on every minor bump. Commit `1f7831f` ("Le SDK React Native exige
-konet-js 0.3.0") is where the floor was raised, because floor control and binary
-frames only exist from the 0.3.0 core.
+konet-js 0.3.0") is where the floor was first raised, because floor control and
+binary frames only exist from the 0.3.0 core. It was raised again to `0.6.0` —
+the release expected to carry them — because this package re-exports
+`BinaryMode`, `ChannelOptions`, `ConnectionStatus` and `KonetBinaryError`, and an
+older core accepts the import, then ignores `binaryMode`, never emits
+`binary_error` and throws on `onStatus()`. **If the next tag is not `v0.6.0`,
+set the floor to that tag's version.** The lockfile's copy of the range had
+stayed at `^0.2.0` since `1f7831f`; it is in sync again.
 
 ⚠️ **Fragile — the `>=` range never expires.** Nothing stops npm from resolving
 a much newer core against an old `konet-rn`. In lockstep releasing that is
