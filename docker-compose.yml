@@ -3,7 +3,9 @@ services:
     build:
       context: ./konet-server
       dockerfile: Dockerfile
-    image: ghcr.io/raucheacho/konet:latest
+    # Override to build and run local code without overwriting the published
+    # tag on this machine (another project may run it): KONET_IMAGE=konet:dev
+    image: ${KONET_IMAGE:-ghcr.io/raucheacho/konet:latest}
     container_name: konet-server
     restart: unless-stopped
     ports:
