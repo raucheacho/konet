@@ -21,20 +21,24 @@ konet/
 ### `konet-server` — the only component that holds state
 
 A Phoenix application with no database. All state lives in memory, in ETS tables
-owned by GenServers, all started from `Konet.Application.start/2`
+owned by `Konet.Tables` (so a worker crash does not empty its table), all
+started from `Konet.Application.start/2`
 (`konet-server/lib/konet/application.ex`):
 
 | Process | Role | ETS table |
 |---|---|---|
+| `Konet.Tables` | creates and owns every named ETS table, nothing else | all of them |
 | `Phoenix.PubSub` (`Konet.PubSub`) | internal broadcast bus | — |
 | `Konet.Presence` | Phoenix presence (who is online) | internal to Phoenix.Presence |
-| `Konet.Metrics` | connection/message counters, per-second rate | — (struct) |
+| `Konet.Metrics` | connection count, per-second rate; the message total is an ETS counter | `:konet_metrics` |
 | `Konet.ChannelRegistry` | subscriber count per room | `:konet_channels` |
 | `Konet.RateLimiter` | connection / message / binary-frame quotas | `:konet_rl` |
 | `Konet.Floor` | exclusive speaking rights (floor control) | `:konet_floor` |
+| `Konet.BinaryMode` | each topic's binary mode (`exclusive` / `multiplex`) | `:konet_binary_mode` |
 | `Konet.LogBuffer` | last 100 events for the Studio Logs page | — (list) |
 | `Konet.History` | replay of the last N broadcasts per room | `:konet_history` |
-| `Task.Supervisor` (`Konet.TaskSupervisor`) | fire-and-forget webhook delivery | — |
+| `Task.Supervisor` (`Konet.WebhookSupervisor`) | webhook delivery, at most `KONET_WEBHOOK_CONCURRENCY` at once | — |
+| `Konet.Webhooks` | schedules webhook retries (`send_after`) | — |
 | `KonetWeb.Telemetry` | telemetry poller | — |
 | `KonetWeb.Endpoint` | HTTP + WebSocket (Bandit) | — |
 

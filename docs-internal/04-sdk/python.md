@@ -25,7 +25,7 @@ commit `67a4263`, and the build backend was fixed from a non-existent
 Designed around the async context manager:
 
 ```python
-async with KonetClient("ws://localhost:4000/socket", token="kt_anon_…") as client:
+async with KonetClient("ws://localhost:4000/socket", token=os.environ["KONET_ANON_KEY"]) as client:  # a JWT from `konet keys generate`
     channel = client.channel("room:lobby")
     await channel.subscribe()
     channel.on("message", lambda p: print(p))
@@ -69,8 +69,11 @@ matching the Go SDK.
 ## Reconnection
 
 This used to be the SDK's weak point and is now its most thoroughly tested part.
-`KonetClient._reconnect` re-opens the socket with exponential backoff **and
-restores the joins**:
+`KonetClient._reconnect` re-opens the socket with exponential backoff — equal
+jitter, `reconnect_delay()`: half of each capped step fixed, half random — **and
+restores the joins**. `client.on_status(handler)` receives a `ConnectionStatus`
+(`connecting`, `connected`, `reconnecting` with `attempt` and `delay`,
+`disconnected`, `failed`) on every change; giving up used to be silent:
 
 ```python
 for channel in list(self._channels.values()):

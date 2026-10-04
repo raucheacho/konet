@@ -1,15 +1,49 @@
 # Binary Frames & Floor Control
 
-Two features that only make sense together: a way to send data at a media rate,
-and a way to decide who is allowed to.
+A way to send data at a media rate, and — when the application needs it — a way
+to decide who is allowed to. Konet arbitrates who may send; it never looks at
+what is sent.
 
-They exist for half-duplex media — push-to-talk, a radio net, a turn-taking
-game — where a second sender must be *told no* rather than mixed in. Konet
-arbitrates who may send; it never looks at what is sent.
+## Binary modes
+
+A topic runs one of two modes, chosen at join:
+
+| Mode | Who may send | For |
+|------|--------------|-----|
+| `exclusive` (default) | the floor holder only | half-duplex: push-to-talk, a radio net, a turn-taking game — a second sender must be *told no* rather than mixed in |
+| `multiplex` | every member, at any time | full-duplex: a call, where both sides talk at once |
+
+```js
+// push-to-talk: nothing to ask for, exclusive is the default
+const ptt = client.channel('room:team-42:ptt')
+
+// a call
+const call = client.channel('room:call-7', { binaryMode: 'multiplex' })
+await call.subscribe()
+call.sendBinary('a', frame) // no floor to take
+```
+
+**The mode belongs to the topic.** A push-to-talk client relies on a second
+sender being refused, and a call client on never being refused, so they cannot
+share one. The first member fixes the mode; a joiner asking for the other one is
+refused, and told which mode is in force:
+
+```json
+{ "status": "error", "response": { "reason": "binary_mode_mismatch", "binary_mode": "multiplex" } }
+```
+
+Every member of a multiplex topic — including one that only sends text — must
+therefore join with `binaryMode: 'multiplex'`. The mode is forgotten once the
+last member leaves.
+
+The join reply confirms the mode, readable as `channel.binaryMode` once joined.
+A server older than modes confirms nothing; the SDKs read that as `exclusive`,
+which is all it ever did.
 
 ## Floor control
 
-At most one member of a topic holds the floor at a time.
+In `exclusive` mode only. At most one member of a topic holds the floor at a
+time.
 
 ```js
 const channel = client.channel('room:team-42:ptt')
@@ -49,13 +83,23 @@ cut off whoever is talking now.
 **The floor is always freed.** Three separate paths cover it: an explicit
 release, the holder's channel process dying — a rider entering a tunnel
 mid-sentence — and a sweep for holders that exceed `KONET_FLOOR_MAX_HOLD_MS`
-(default 30 000). A client that vanishes cannot mute a channel.
+(default 30 000). A client that vanishes cannot mute a channel. Every one of
+these paths announces `konet:floor` with `holder: null`, the holder included —
+which is how a holder whose floor expired finds out.
 
 ### Refusals
 
 ```json
 { "status": "error", "response": { "reason": "floor_held", "holder": "alice" } }
 { "status": "error", "response": { "reason": "not_holder" } }
+```
+
+On a `multiplex` topic the floor does not exist — it is not granted to everyone,
+it is never consulted. Both floor events are refused, and no `konet:floor` is
+ever announced:
+
+```json
+{ "status": "error", "response": { "reason": "floor_disabled", "binary_mode": "multiplex" } }
 ```
 
 ## Binary frames
@@ -77,10 +121,25 @@ The event name is yours; short is better, since it travels on every frame.
 
 ### Rules
 
-**The floor is required.** A binary frame from a client that does not hold it is
-refused with `floor_required`. This is the point of the two features being one
-page: binary frames are how media is sent, and the floor is what makes that
-safe.
+**In `exclusive` mode, the floor is required.** A binary frame from a client
+that does not hold it is refused with `floor_required`. In `multiplex` mode any
+member may send; frames from several members are relayed independently, none
+waits for or replaces another.
+
+**In `multiplex` mode, every frame names its sender.** The server puts the
+sender's user id — the token's `sub` — in front of the data before relaying it,
+and the SDKs split it off and hand it to the handler:
+
+```js
+call.on('a', (data, sender) => {
+  decoders.get(sender).decode(data) // one stream per sender
+})
+```
+
+The server writes it, so a member cannot pass for another. A member whose user
+id is longer than 255 bytes cannot be carried by the one-byte length and is
+refused at a multiplex join with `invalid_sender_id`. In `exclusive` mode frames
+are relayed untouched: the floor holder is the sender.
 
 **Frames are never echoed to the sender.** Konet uses `broadcast_from!`, not
 `broadcast!` — returning a talker's own audio is echo, and on a phone it is echo
@@ -106,8 +165,9 @@ rate, not a message rate: 20 ms frames are 50 per second on their own, and
 sharing the message budget would have a talker starve their own position
 updates.
 
-The floor already allows one sender per topic, so this limit is a backstop
-against a single flooding client rather than the primary control.
+The limit is per socket: it stops one client flooding. In `exclusive` mode the
+floor also bounds a topic to one sender; in `multiplex` mode nothing does, so
+a topic with *n* senders fans out *n × (n − 1)* streams.
 
 ## Performance
 
@@ -141,6 +201,17 @@ mistake to expect when writing a new client — the SDKs name their decoders
 Sizes are byte counts, not character counts. A topic like `room:équipe` is 11
 bytes for 10 characters; using the character count shifts every field after it.
 
+On a `multiplex` topic, the `data` of a frame received from the server is
+itself prefixed with its sender:
+
+```
+data       sender_size | sender | payload
+```
+
+`sender_size` is one byte, `sender` is the sender's user id in UTF-8, `payload`
+is what the sender sent. A client sends its frames without this prefix; only the
+server adds it. `exclusive` frames have no prefix.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -150,12 +221,14 @@ bytes for 10 characters; using the character count shifts every field after it.
 
 ## Support by SDK
 
-| SDK | Binary | Floor |
-|-----|--------|-------|
-| JavaScript | `channel.sendBinary()` / `channel.on()` | `acquireFloor()` / `releaseFloor()` |
-| React Native | same, via the JavaScript core | same |
-| Go | `channel.SendBinary()` / `channel.OnBinary()` | `AcquireFloor()` / `ReleaseFloor()` |
-| Python | `channel.send_binary()` / `channel.on_binary()` | `acquire_floor()` / `release_floor()` |
+| SDK | Mode | Binary | Floor |
+|-----|------|--------|-------|
+| JavaScript | `client.channel(topic, { binaryMode })` | `channel.sendBinary()` / `channel.on(event, (data, sender) => …)` | `acquireFloor()` / `releaseFloor()` |
+| React Native | same, via the JavaScript core | same | same |
+| Go | `client.Channel(topic, konet.WithBinaryMode(konet.BinaryMultiplex))` | `channel.SendBinary()` / `channel.OnBinary()`, or `channel.OnBinaryFrom()` for the sender | `AcquireFloor()` / `ReleaseFloor()` |
+| Python | `client.channel(topic, binary_mode="multiplex")` | `channel.send_binary()` / `channel.on_binary()`, or `channel.on_binary_from()` for the sender | `acquire_floor()` / `release_floor()` |
+
+The SDKs send the mode on every join, reconnects included.
 
 React Native needs no native module: its WebSocket supports
 `binaryType = "arraybuffer"`, so binary frames work on a phone exactly as they

@@ -52,5 +52,10 @@ Real-time stream of join, leave, and broadcast events with timestamps.
 ## Authentication
 
 Studio is gated by a separate password, not your `anon`/`service` keys — set `KONET_STUDIO_PASSWORD`
-to require sign-in at `/studio/login`. If it's unset, the Studio has no login at all, which is the
-default in local dev. Set it for any deployment reachable outside `localhost`.
+to require sign-in at `/studio/login`. `docker-compose.yml` requires it and will not start without
+one.
+
+If it's unset (running the image directly, or local dev), the Studio has no login at all. The server
+logs a warning at boot, and the **Keys** page shows only the anon key: the service key is masked, the
+JWT secret cannot be revealed, and rotation is disabled. Everything else — channels, presence, logs,
+broadcast — stays open, so set it for any deployment reachable outside `localhost`.

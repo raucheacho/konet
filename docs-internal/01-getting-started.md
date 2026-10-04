@@ -190,11 +190,12 @@ effect there.
 |---|---|---|---|---|
 | `SECRET_KEY_BASE` | **yes in prod** (raises) | dev fallback string | prod + dev | Phoenix cookie/session signing. Not the JWT secret. |
 | `KONET_JWT_SECRET` | **yes in prod** (raises) | `dev.exs` value in dev | prod + dev | HMAC-SHA256 key for every JWT (anon, service, user tokens). |
-| `KONET_HOST` | no | `localhost` | prod only | Public hostname used in generated URLs (`url: [host: …, port: 443, scheme: "https"]`). |
-| `KONET_PORT` | no | `4000` | prod only | HTTP listen port. |
+| `KONET_HOST` | no | `localhost` | prod + dev | Public hostname used in generated URLs (prod: `url: [host: …, port: 443, scheme: "https"]`). |
+| `KONET_PORT` | no | `4000` | prod + dev | HTTP listen port. |
 | `KONET_ANON_KEY` | no | `nil` | prod only | Pre-minted public token, displayed in Studio → Keys. |
 | `KONET_SERVICE_KEY` | no | `nil` | prod only | Pre-minted admin token; required by every `/api/*` admin route. |
-| `KONET_STUDIO_PASSWORD` | no | `nil` | prod + dev | Studio password. **Unset means the Studio has no login at all.** |
+| `KONET_STUDIO_PASSWORD` | no (**yes in `docker-compose.yml`**) | `nil` | prod + dev | Studio password. **Unset means the Studio has no login at all**; the server then warns at boot and the Keys page hides the service key and secret and refuses rotation. |
+| `KONET_SECRET_FILE` | no | `nil` (`/data/jwt_secret` in compose) | prod + dev | Where a Studio rotation is persisted (0600) and read back at boot, taking precedence over `KONET_JWT_SECRET`. |
 | `KONET_ALLOWED_ORIGINS` | no | `*` | prod only | WebSocket origin check. `*`/empty → `check_origin: false`; otherwise a comma-separated list. |
 | `KONET_RATE_LIMIT` | no | `60` | prod + dev | Broadcasts per second per socket. |
 | `KONET_CONN_RATE_LIMIT` | no | `200` | prod + dev | New connections per minute per IP. |
@@ -206,12 +207,14 @@ effect there.
 | `KONET_LOG_BROADCASTS` | no | `true` | prod + dev | Write an entry to the Studio Logs page per accepted broadcast. `false` for high-throughput deployments. |
 | `KONET_WEBHOOK_URL` | no | `nil` | prod + dev | POST target for channel lifecycle events. Empty disables webhooks. |
 | `KONET_WEBHOOK_SECRET` | no | `nil` | prod + dev | When set, requests carry `x-konet-signature: sha256=<hex>`. |
+| `KONET_WEBHOOK_RETRIES` | no | `3` | prod + dev | Total attempts per webhook event; `1` disables retrying. |
+| `KONET_WEBHOOK_CONCURRENCY` | no | `50` | prod + dev | Webhook deliveries in flight at once; beyond it an event is dropped and logged. Read at boot (it sizes the pool). |
 | `MIX_ENV` / `PHX_SERVER` | set by the image | `prod` / `true` | Dockerfile | The release only starts the endpoint when `PHX_SERVER=true`. |
 | `ERL_FLAGS` | set by the image | `+JMsingle true` | Dockerfile builder stage | Works around the BEAM JIT under QEMU during multi-arch builds. |
 
-Note that `KONET_HOST`, `KONET_PORT`, `KONET_ANON_KEY`, `KONET_SERVICE_KEY` and
-`KONET_ALLOWED_ORIGINS` are only read in the `:prod` block. Running
-`mix phx.server` in dev ignores them.
+Note that `KONET_ANON_KEY`, `KONET_SERVICE_KEY` and `KONET_ALLOWED_ORIGINS` are
+only read in the `:prod` block of `runtime.exs`; in dev the origin check is open
+and the Studio Keys page falls back to reading the two key variables directly.
 
 **`KONET_TRUST_PROXY_HEADERS` cuts both ways.** Off, every connection behind a
 reverse proxy carries the proxy's IP, so `KONET_CONN_RATE_LIMIT` becomes one

@@ -39,7 +39,10 @@ type Client struct {
 ```
 
 `ClientOptions`: `HeartbeatInterval` (30 s), `ReconnectDelay` (1 s),
-`MaxReconnectTries` (10), `HTTPHeader` (passed to the dial — the one place a Go
+`MaxReconnectTries` (10), `OnStatus` (called with a `Status` on every change:
+`StatusConnecting`, `StatusConnected`, `StatusReconnecting` with `Attempt` and
+`Delay`, `StatusDisconnected`, `StatusFailed` — giving up used to be silent; it
+runs on the client's goroutine, and a panic in it is recovered), `HTTPHeader` (passed to the dial — the one place a Go
 caller *can* use headers, unlike a browser).
 
 Connection follows the same URL convention as every SDK:
@@ -129,7 +132,8 @@ if err != nil {
 ```
 
 `reconnect` marks every channel closed, **closes the abandoned connection**,
-backs off exponentially, dials, and then re-joins from a goroutine — inline
+backs off exponentially with equal jitter (`reconnectDelay`: half of each
+capped step fixed, half random), dials, and then re-joins from a goroutine — inline
 would deadlock, since `Subscribe` blocks on a reply that only the calling read
 loop can deliver.
 

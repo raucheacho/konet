@@ -9,7 +9,7 @@ Konet is a lightweight, self-hosted alternative to managed realtime services. It
 - **Channels** — pub/sub over WebSockets with room scoping  
 - **Presence** — track who is online, with metadata  
 - **Broadcast** — low-latency ephemeral events, with optional in-memory history replay for late joiners  
-- **Binary frames** — media-rate transport with floor control, for push-to-talk and half-duplex audio  
+- **Binary frames** — media-rate transport, either exclusive (floor control, for push-to-talk) or multiplex (every member sends at once, for calls)  
 - **JWT Auth** — stateless HMAC tokens, with per-channel scoping via token claims  
 - **Rate Limiting** — per-socket message and per-IP connection throttling  
 - **Webhooks** — POST channel/member lifecycle events to your backend, optionally HMAC-signed  

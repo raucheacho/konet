@@ -44,25 +44,29 @@ last, so no socket can be accepted before the ETS tables exist.
 ```mermaid
 flowchart TD
     SUP["Konet.Supervisor<br/>:one_for_one"]
+    SUP --> TAB["Konet.Tables<br/>owns every ETS table"]
     SUP --> PS["Phoenix.PubSub<br/>Konet.PubSub"]
     SUP --> PRES["Konet.Presence"]
-    SUP --> MET["Konet.Metrics"]
+    SUP --> MET["Konet.Metrics<br/>ETS :konet_metrics"]
     SUP --> REG["Konet.ChannelRegistry<br/>ETS :konet_channels"]
     SUP --> RL["Konet.RateLimiter<br/>ETS :konet_rl"]
     SUP --> FL["Konet.Floor<br/>ETS :konet_floor"]
+    SUP --> BM["Konet.BinaryMode<br/>ETS :konet_binary_mode"]
     SUP --> LB["Konet.LogBuffer"]
     SUP --> HIST["Konet.History<br/>ETS :konet_history"]
-    SUP --> TS["Task.Supervisor<br/>Konet.TaskSupervisor"]
+    SUP --> WS["Task.Supervisor<br/>Konet.WebhookSupervisor"]
+    SUP --> WH["Konet.Webhooks<br/>retry scheduler"]
     SUP --> TEL["KonetWeb.Telemetry"]
     SUP --> EP["KonetWeb.Endpoint<br/>Bandit"]
 ```
 
-⚠️ **Fragile — every ETS table is owned by its GenServer.** They are created
-with `:named_table, :public` inside `init/1`, so if a GenServer crashes, its
-table is destroyed and recreated **empty** by the restart. For `RateLimiter`
-that is harmless (counters reset). For `Floor` it silently frees every held
-floor; for `ChannelRegistry` the Studio's channel list empties while sockets are
-still connected and never recovers, because counts are only incremented on join.
+**Every ETS table is owned by `Konet.Tables`**, started first, which creates
+them `:named_table, :public` and does nothing else. They used to be created in
+each GenServer's `init/1`, so a crash destroyed the table and the restart
+recreated it **empty** — silently freeing every floor, and emptying the
+Studio's channel list for good. Now a worker crash costs only its own small,
+rebuildable state; `Floor` and `BinaryMode` rebuild their monitors from their
+tables on restart. Pinned by `test/konet/tables_test.exs`.
 
 ## The three entry paths
 
@@ -172,8 +176,9 @@ table is an ETS entry with an explicit lifetime:
 | `History` | yes | `KONET_HISTORY_LIMIT` entries per room |
 | `Floor` | yes | one row per topic, swept after `KONET_FLOOR_MAX_HOLD_MS` |
 | `LogBuffer` | yes | 100 entries |
-| `RateLimiter` | yes | wiped wholesale every 120 s |
-| Keys / secrets | yes if rotated in the Studio | — |
+| `BinaryMode` | yes | one row per member of a topic |
+| `RateLimiter` | yes | windows that are over, deleted every 120 s |
+| Keys / secrets | only if rotated without `KONET_SECRET_FILE` (the compose file sets it, on a volume) | — |
 
 **`Konet.History` evicts on age, not on occupancy.** A sweep every 60 s drops
 rooms whose last write is older than `KONET_HISTORY_TTL` (default 900 s), which

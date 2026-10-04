@@ -115,9 +115,17 @@ it.
 
 ### 5. Reconnect backoff
 
-`scheduleReconnect()` — `reconnectDelayMs * 2^attempts`, capped at 30 s, up to
-`maxReconnectAttempts` (default 10). After that the client gives up until
-`checkConnection()` revives it.
+`scheduleReconnect()` waits `reconnectDelay(reconnectDelayMs, attempts)`: the
+step `reconnectDelayMs * 2^attempts`, capped at 30 s, of which half is fixed and
+half random ("equal jitter") — so never more than the step, never less than half
+of it. Without the random half, every client dropped by a server restart came
+back in lockstep. Up to `maxReconnectAttempts` (default 10); after that the
+client gives up until `checkConnection()` revives it.
+
+`client.onStatus(handler)` reports each step — `connecting`, `connected`,
+`reconnecting` (with `attempt` and `delayMs`), `disconnected` (explicit
+`disconnect()`), `failed` (attempts used up). Giving up used to be silent. A
+handler that throws is ignored.
 
 ### Options
 

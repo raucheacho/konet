@@ -54,6 +54,10 @@ c := konet.New(url, token, konet.ClientOptions{
     ReconnectDelay:    time.Second,
     MaxReconnectTries: 10,
     HTTPHeader:        nil, // extra headers for the WS handshake
+    // Called on every status change: StatusConnecting, StatusConnected,
+    // StatusReconnecting (s.Attempt, s.Delay), StatusDisconnected, StatusFailed.
+    // Runs on the client's goroutine — return quickly.
+    OnStatus: func(s konet.Status) {},
 })
 err := c.Connect(ctx)
 c.Disconnect()
@@ -103,6 +107,20 @@ return channel.ReleaseFloor(ctx)
 
 `SendBinary` copies its argument, so a caller may reuse one buffer for every
 frame.
+
+For a call, where both sides send at once, join in multiplex mode: there is no
+floor to take, and every member must ask for the same mode.
+
+```go
+call := client.Channel("room:call-7", konet.WithBinaryMode(konet.BinaryMultiplex))
+if err := call.Subscribe(ctx); err != nil {
+    return err
+}
+call.OnBinaryFrom("a", func(data []byte, sender string) {
+    // sender: the user id of the member who sent this frame
+})
+return call.SendBinary("a", frame)
+```
 
 Binary handlers run **synchronously**, unlike `On` handlers which each get a
 goroutine: audio frames have to reach a play-out buffer in the order they

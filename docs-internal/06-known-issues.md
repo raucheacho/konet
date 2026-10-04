@@ -33,15 +33,14 @@ half-built. Scale up, not out, until there is a reason.
 `cmd/start.go` rejects anything but `docker` with a message pointing at
 `mix phx.server`. The field itself could go once no config in the wild sets it.
 
-### 3. `install.sh` is not yet on `main` — **open until merged**
+### 3. `install.sh` on `main` — **resolved**
 
 `konet upgrade` fetches
 `https://raw.githubusercontent.com/raucheacho/konet/main/install.sh` when it is
-allowed to self-update at all. The script exists in this tree and is verified
-end to end against the published v0.3.0 release (download → checksum → extract →
-install → run), but the URL only resolves once it lands on `main`. Until then
-`upgrade` takes its fallback path and prints the releases page — correct
-behaviour, unlike the old one of piping a 404 page to `sh`.
+allowed to self-update at all. The script is on `main`, so that URL resolves.
+Any archive it cannot verify — no checksums file, no entry for the archive, no
+sha256 tool — is now **refused** rather than installed with a warning;
+`KONET_SKIP_CHECKSUM=1` is the explicit override.
 
 Note this only affects installs that *no package manager owns*. On Homebrew or
 Scoop the command never touches the network path at all; see below.
@@ -84,7 +83,8 @@ rewrites `__version__`, and the server derives its version from the
 
 ### 5. Webhook ordering is not guaranteed — **by design**
 
-Each event is its own supervised task, and a retry pushes one further back, so
+Each delivery attempt is its own supervised task, and a retry pushes an event
+further back, so
 `member_joined` and `member_left` for the same user can arrive out of order.
 Delivery is at-least-once. Receivers must be idempotent; every request carries a
 stable `id` for exactly that.
@@ -107,6 +107,40 @@ protocol it speaks is the core's, which *is* covered.
 The conformance harness asserts it against a real server (step 7), so a change
 would be caught. No SDK's own unit tests assert it, which matters only if the
 harness is skipped.
+
+### 9. Tokens never expire unless their issuer says so — **by design**
+
+`Auth.sign/1` adds only `iat`; `verify/1` checks `exp` only when present. Making
+`exp` mandatory would invalidate every anon/service key already issued, so the
+keys `konet keys generate` and `rotate!/0` mint are perpetual, and the only
+revocation is a global rotation that cuts every client at once. A backend
+minting per-user tokens can and should set `exp` itself.
+
+### 10. A multiplex topic has no per-topic sending bound — **open**
+
+The binary budget is per socket. In `exclusive` mode the floor also bounds a
+topic to one sender; in `multiplex` nothing does, and *n* senders fan out
+*n × (n − 1)* streams.
+
+### 11. A refused binary frame is never surfaced by the SDKs — **open**
+
+The server replies `{reason: "floor_required"}` (or `rate_limited`) as a JSON
+`phx_reply`, but `sendBinary` tracks no ref — deliberately, at fifty frames a
+second — so every SDK drops it. Since `konet:floor {holder: nil}` is now
+announced on every release, a holder learns its floor is gone; a client
+sending without ever having held it still learns nothing.
+
+### 12. The 8.6 MB `conformance/go/go` binary is still in git history — **open**
+
+It is no longer tracked and is ignored, but removing it from history means
+rewriting published commits, which is the maintainer's call.
+
+### 13. Releases carry provenance, not signatures — **mitigated**
+
+The CLI release workflow attests build provenance (`gh attestation verify
+<archive> --repo raucheacho/konet`), and `install.sh` refuses unverifiable
+archives. Neither `install.sh` nor `konet upgrade` checks the attestation
+itself (that needs `gh`), and nothing is signed with cosign.
 
 ## Fixed — kept so nobody re-introduces them
 
@@ -194,17 +228,37 @@ that test *is* the guard.
 
 ---
 
+### Third round — external audit (`konet-analyse.md`, on `4d6ed88`)
+
+| Was | Now | Pinned by |
+|---|---|---|
+| **The Studio was open on the reference deployment.** `docker-compose.yml` defaulted `KONET_STUDIO_PASSWORD` to empty, nothing warned at boot, and the Keys page showed both keys in clear, revealed the **JWT secret** on a click and rotated for anyone. | compose requires it (`:?`); `Konet.Application` warns at boot when the endpoint serves without one; without one, `KeysLive` masks the service key, hides the secret and ignores `rotate`/`toggle_secret` | `test/konet_web/live/keys_live_test.exs`; `docker compose config` fails without it |
+| **Studio rotation was in-memory on the reference deployment** — no `KONET_SECRET_FILE`, no volume. | compose sets `KONET_SECRET_FILE=/data/jwt_secret` on a `konet-data` volume; the image creates `/data` owned by `nobody`; `.env.example` documents it | — |
+| **An expired or vanished floor holder was dropped silently**: listeners kept showing them as talking. | `Konet.Floor` broadcasts `konet:floor {holder: nil}` from the sweep and from `:DOWN` | `floor_test.exs` `describe "releases decided by the arbiter are announced"` |
+| **Reconnect backoff had no jitter** in any SDK: a server restart brought every client back in lockstep. | equal jitter (half of each capped step random) in `reconnectDelay` / `reconnect_delay` | JS `describe("reconnect backoff")`, Go `TestReconnectDelayJittersHalfOfEachStep`, Python `test_reconnect_delay_jitters_half_of_each_step` |
+| **No connection lifecycle events; giving up was silent.** | `client.onStatus` (JS/RN), `ClientOptions.OnStatus` (Go), `client.on_status` (Python): connecting / connected / reconnecting / disconnected / failed | JS `describe("connection status")`, Go `TestStatusReportsEachStepIncludingGivingUp`, Python `test_status_reports_each_step_including_giving_up` |
+| **SDK examples used the `kt_anon_xxx` placeholder** this registry already called invalid. | examples read a real key from `KONET_ANON_KEY` | — |
+| **An 8.6 MB arm64 binary was tracked** (`conformance/go/go`). | untracked and in `.gitignore` | — (see open item 12 for history) |
+| **`Metrics.message_sent/0` cast to one GenServer on every binary frame.** | `:ets.update_counter/4` on `:konet_metrics` (decentralized counters); the rate is the difference of two reads | `metrics_test.exs` `"counting a message never waits on the Metrics process"` |
+| **Webhooks: one unbounded task per event, sleeping through its backoff.** | `Konet.WebhookSupervisor` with `max_children: KONET_WEBHOOK_CONCURRENCY` (overflow dropped and logged); retries scheduled with `send_after` by `Konet.Webhooks`, holding no slot; HTTPS verified explicitly | `webhooks_test.exs` (ceiling, free slot during retry, TLS options) |
+| **Rate-limiter cleanup reset the current window** (`delete_all_objects`). | tuple keys; cleanup `select_delete`s only past windows | `rate_limiter_test.exs` (two cleanup tests) |
+| **`install.sh` installed unverifiable archives with a warning.** | refused unless `KONET_SKIP_CHECKSUM=1` | exercised by hand: match, mismatch, missing entry, override |
+| **No format checks in CI.** | `.formatter.exs` + `mix format --check-formatted`; `gofmt -l` for the CLI and Go SDK | CI |
+| **CLI interpolated the channel into `/api/presence/%s` unescaped.** | `url.PathEscape` | `internal/api/client_test.go` |
+| **A refused join ran `terminate/2` as a leave**: a `leave` log, a `member_left` webhook with `room: nil`, a registry decrement on `"unknown"`. | `terminate/2` returns at once when no `room_id` was assigned | `room_channel_test.exs` `"a refused join is not reported as a leave"` |
+| **No build provenance on releases.** | `actions/attest-build-provenance` on the CLI archives and checksums | — (runs on tag) |
+
 ## Test counts, before and after
 
-| Suite | Before | After |
-|---|---|---|
-| `konet-server` | 31 | 76 |
-| `sdk/go` | 8 (binary framing only) | 16 |
-| `sdk/python` | 12 (binary framing only) | 19 |
-| `sdk/js` | 26 | 26 |
-| `sdk/react-native` | 7 | 7 |
-| `konet-cli` | 3 (config only) | 8 |
-| **conformance** (3 SDKs × 15 steps, real server) | **0** | **45** |
+| Suite | Before | After | Now (binary modes, sender prefix, audit fixes) |
+|---|---|---|---|
+| `konet-server` | 31 | 76 | 108 |
+| `sdk/go` | 8 (binary framing only) | 16 | 26 |
+| `sdk/python` | 12 (binary framing only) | 19 | 29 |
+| `sdk/js` | 26 | 26 | 42 |
+| `sdk/react-native` | 7 | 7 | 7 |
+| `konet-cli` | 3 (config only) | 8 | 18 |
+| **conformance** (3 SDKs, real server) | **0** | **45** (× 15 steps) | **60** (× 20 steps) |
 
 CI additionally runs the Go SDK suite under `-race`, the Python suite at all,
 and the conformance harness — none of which it did before.

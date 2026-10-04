@@ -23,7 +23,9 @@ variables when it starts the container.
 | `KONET_JWT_SECRET` | **Yes** | — | HMAC secret every token is signed with |
 | `KONET_ANON_KEY` | No | — | Pre-generated anonymous token |
 | `KONET_SERVICE_KEY` | No | — | Pre-generated service/admin token |
-| `KONET_STUDIO_PASSWORD` | No | unset | Password for `/studio`. Unset = no login (fine for local dev, not for anything reachable beyond localhost) |
+| `KONET_STUDIO_PASSWORD` | **Yes** with `docker-compose.yml` | unset | Password for `/studio`. Unset = no login: the server warns at boot and the Keys page hides the service key and secret and refuses rotation, but the rest of the Studio is open. Fine for local dev only |
+| `KONET_SECRET_FILE` | No | unset (`/data/jwt_secret` in `docker-compose.yml`) | File a secret rotated from the Studio is written to (mode 0600) and read back at boot, taking precedence over `KONET_JWT_SECRET`. Put it on a volume. Unset = a rotation is lost on restart |
+| `KONET_TRUST_PROXY_HEADERS` | No | `false` | Read the client IP from `X-Forwarded-For` for the per-IP connection limit. Set it only behind a reverse proxy; without a proxy, clients could forge the header |
 | `KONET_ALLOWED_ORIGINS` | No | `*` | WebSocket origin check: `*` accepts any origin; otherwise a comma-separated list (`https://app.example.com,https://admin.example.com`) |
 
 ### Limits
@@ -40,8 +42,12 @@ variables when it starts the container.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `KONET_HISTORY_LIMIT` | `0` | Keep the last N broadcasts per room and replay them to late joiners as a `konet:history` event. `0` disables. In-memory only — cleared on restart |
-| `KONET_WEBHOOK_URL` | unset | POST `channel_occupied`, `channel_vacated`, `member_joined`, `member_left` events to this URL |
+| `KONET_HISTORY_TTL` | `900` | Seconds a room's replay buffer outlives its last message |
+| `KONET_LOG_BROADCASTS` | `true` | Log every accepted broadcast to the Studio Logs page. `false` for high-throughput deployments; join/leave and floor entries are kept |
+| `KONET_WEBHOOK_URL` | unset | POST `channel_occupied`, `channel_vacated`, `member_joined`, `member_left`, `floor_acquired`, `floor_released` events to this URL |
 | `KONET_WEBHOOK_SECRET` | unset | If set, webhook requests carry `x-konet-signature: sha256=<hex>` (HMAC-SHA256 of the body) |
+| `KONET_WEBHOOK_RETRIES` | `3` | Total attempts per event for a 5xx, 408, 429 or network error (backoff 500 ms, 1 s, 2 s…). `1` disables retrying |
+| `KONET_WEBHOOK_CONCURRENCY` | `50` | Deliveries in flight at once. Beyond it an event is dropped and logged rather than queued; a pending retry does not count |
 
 ## konet.config.toml (CLI, local dev)
 
@@ -98,7 +104,8 @@ Prometheus scrape job at it with `bearer_token` set to your service key.
 ## Production Checklist
 
 - [ ] Set strong `SECRET_KEY_BASE` and `KONET_JWT_SECRET`
-- [ ] Set `KONET_STUDIO_PASSWORD`
+- [ ] Set `KONET_STUDIO_PASSWORD` (`docker-compose.yml` requires it)
+- [ ] Keep `KONET_SECRET_FILE` on a volume, so a Studio rotation survives restarts
 - [ ] Restrict `KONET_ALLOWED_ORIGINS` to your app's domains
 - [ ] Run behind a reverse proxy (Nginx, Traefik, Caddy) with TLS
 - [ ] Point Prometheus (or any scraper) at `/metrics`

@@ -15,11 +15,29 @@ may join **any** room (see *scoped token*). Minted by `konet keys generate`,
 **binary frame** — A WebSocket message carrying raw bytes instead of JSON, using
 Phoenix Channels v2's own framing (three shapes, distinguished by the first
 byte). Konet uses them for media-rate payloads — audio, telemetry — because
-base64-inside-JSON costs a third of overhead plus a parse every 20 ms. Refused
-unless the sender holds the channel's *floor*, never recorded in *history*,
-never logged, and never echoed back to the sender.
+base64-inside-JSON costs a third of overhead plus a parse every 20 ms. In
+*exclusive* mode refused unless the sender holds the channel's *floor*; in
+*multiplex* mode accepted from any member. Never recorded in *history*, never
+logged, and never echoed back to the sender.
 → `lib/konet_web/room_channel.ex` (`handle_in/3` with `{:binary, data}`),
 `sdk/*/binary.{ts,go,py}`
+
+**binary mode** — How a topic shares binary frames, chosen at join with
+`binary_mode`: `exclusive` (default — one sender at a time, through the
+*floor*) or `multiplex` (every member sends at once, no floor at all). Belongs
+to the topic, not the member: fixed by the first member, a joiner asking for the
+other is refused with `binary_mode_mismatch`, forgotten once the topic empties.
+Cached in `socket.assigns.binary_mode`, so the hot path reads no table.
+→ `lib/konet/binary_mode.ex`
+
+**sender prefix** — In `multiplex` mode only, the server relays each binary
+frame's data as `sender_size | sender | payload`, `sender` being the token's
+`sub`. Lets receivers separate concurrent streams; cannot be forged by a client.
+→ `RoomChannel.sender_prefix/2`, `stamp/2`; `sdk/*/binary.*` (`splitSender`)
+
+**binary_mode_mismatch** — The join refusal when a client asks for the other
+mode than the members already on the topic. Carries the mode in force:
+`{reason: "binary_mode_mismatch", binary_mode: "multiplex"}`.
 
 **broadcast** — Konet's core operation: a client sends the event
 `"broadcast"` with payload `{event, payload}`, and the server re-emits it to
@@ -53,8 +71,12 @@ mixed in. The primitive behind half-duplex media (push-to-talk, a radio net, a
 turn-based game). Konet arbitrates who may send; it does not know what is being
 sent. Acquisition is atomic (`:ets.insert_new/2` as a compare-and-swap), and
 release is guaranteed three ways: explicit release, a process monitor on the
-holder, and a sweep after `KONET_FLOOR_MAX_HOLD_MS`.
+holder, and a sweep after `KONET_FLOOR_MAX_HOLD_MS`. Only in *exclusive*
+*binary mode*: a multiplex topic never touches `Konet.Floor`.
 → `lib/konet/floor.ex`
+
+**floor_disabled** — The refusal for `konet:floor_acquire` / `konet:floor_release`
+on a multiplex topic, where the floor does not exist.
 
 **floor_held** — The refusal reason returned by `konet:floor_acquire` when
 someone else holds the floor. The reply names them: `{reason: "floor_held",
@@ -66,7 +88,9 @@ holding the floor.
 **`konet:floor`** — The server broadcast announcing a floor change, payload
 `{holder: user_id | nil, since: ms}`. Sent to **everyone including the new
 holder**: subscribers need to know a stream is starting before its first frame
-arrives, and the holder needs the same id to stamp its frames with.
+arrives, and the holder sees the same `holder` and `since` as everyone else.
+Frames themselves carry no holder id: in exclusive mode the sender is implied
+by this announcement.
 
 **`konet:history`** — The single push a client receives just after joining, when
 history replay is enabled, carrying `{messages: [{event, payload, timestamp}]}`
@@ -130,9 +154,10 @@ nothing uses that today).
 
 **Studio** — The LiveView admin dashboard at `/studio`, served by the Konet
 server itself on the same port (there is deliberately no separate listener).
-Seven pages: Overview, Channels, Presence, Logs, Broadcast, Keys. Protected by
+Six pages: Overview, Channels, Presence, Logs, Broadcast, Keys. Protected by
 `KONET_STUDIO_PASSWORD` — **and an unset password means no login at all**, not
-that it is disabled.
+that it is disabled (the Keys page then hides the service key and secret and
+refuses rotation; `docker-compose.yml` requires the password).
 → `lib/konet_web/live/studio/`
 
 **topic** — The Phoenix string identifying a subscription, e.g. `"room:lobby"`.
