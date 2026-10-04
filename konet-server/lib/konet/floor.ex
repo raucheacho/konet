@@ -221,8 +221,7 @@ defmodule Konet.Floor do
     # cannot be built from a topic alone.
     expired =
       :ets.select(@table, [
-        {{:"$1", :"$2", :_, :"$3", :"$4"}, [{:"=<", :"$3", cutoff}],
-         [{{:"$1", :"$2", :"$4"}}]}
+        {{:"$1", :"$2", :_, :"$3", :"$4"}, [{:"=<", :"$3", cutoff}], [{{:"$1", :"$2", :"$4"}}]}
       ])
 
     state =

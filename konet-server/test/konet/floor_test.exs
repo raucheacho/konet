@@ -69,6 +69,7 @@ defmodule Konet.FloorTest do
     end
 
     :sys.get_state(Floor)
+
     assert monitor_count() == {refs_before, topics_before},
            "one monitor per press was left behind on the holder's pid"
   end

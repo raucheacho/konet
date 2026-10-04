@@ -130,7 +130,9 @@ defmodule KonetWeb.RoomChannel do
         # high-throughput deployment can turn it off with
         # KONET_LOG_BROADCASTS=false without losing the low-rate join/leave and
         # floor entries.
-        if log_broadcasts?(), do: log_event("broadcast", %{room: socket.assigns.room_id, event: event})
+        if log_broadcasts?(),
+          do: log_event("broadcast", %{room: socket.assigns.room_id, event: event})
+
         broadcast!(socket, event, payload)
         {:noreply, socket}
 

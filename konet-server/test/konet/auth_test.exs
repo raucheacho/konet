@@ -119,7 +119,12 @@ defmodule Konet.AuthTest do
     end
 
     test "reports the failure instead of claiming success when the path is unwritable" do
-      path = Path.join(System.tmp_dir!(), "konet-missing-dir-#{System.unique_integer([:positive])}/secret")
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "konet-missing-dir-#{System.unique_integer([:positive])}/secret"
+        )
+
       Application.put_env(:konet, :secret_file, path)
 
       result = Auth.rotate!()

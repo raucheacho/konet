@@ -5,7 +5,8 @@ config :konet, KonetWeb.Endpoint,
   check_origin: false,
   code_reloader: false,
   debug_errors: true,
-  secret_key_base: "dev-secret-key-base-not-for-production-change-this-now-must-be-64-chars-minimum!!",
+  secret_key_base:
+    "dev-secret-key-base-not-for-production-change-this-now-must-be-64-chars-minimum!!",
   watchers: [
     esbuild: {Esbuild, :install_and_run, [:konet, ~w(--sourcemap=inline --watch)]}
   ]

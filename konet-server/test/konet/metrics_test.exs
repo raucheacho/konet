@@ -12,7 +12,7 @@ defmodule Konet.MetricsTest do
   # count drifted to zero. It is now owned by a monitor on the socket process,
   # which cannot drift.
 
-  defp settle, do: (_ = Metrics.get())
+  defp settle, do: _ = Metrics.get()
 
   defp spawn_socket do
     pid = spawn(fn -> Process.sleep(:infinity) end)

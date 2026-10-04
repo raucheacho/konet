@@ -30,7 +30,9 @@ defmodule Konet.Metrics do
             started_at: nil
 
   def start_link(_opts) do
-    GenServer.start_link(__MODULE__, %__MODULE__{started_at: DateTime.utc_now()}, name: __MODULE__)
+    GenServer.start_link(__MODULE__, %__MODULE__{started_at: DateTime.utc_now()},
+      name: __MODULE__
+    )
   end
 
   @doc """
@@ -81,7 +83,10 @@ defmodule Konet.Metrics do
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, %{metrics: metrics, monitors: monitors} = state) do
+  def handle_info(
+        {:DOWN, _ref, :process, pid, _reason},
+        %{metrics: metrics, monitors: monitors} = state
+      ) do
     case Map.pop(monitors, pid) do
       {nil, _} ->
         {:noreply, state}

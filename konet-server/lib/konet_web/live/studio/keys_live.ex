@@ -167,6 +167,7 @@ defmodule KonetWeb.Studio.KeysLive do
   defp mask_secret(nil), do: "not set"
   defp mask_secret(""), do: "not set"
   defp mask_secret(s) when byte_size(s) <= 8, do: String.duplicate("*", byte_size(s))
+
   defp mask_secret(s) do
     visible = String.slice(s, 0, 4)
     "#{visible}#{String.duplicate("*", max(0, byte_size(s) - 4))}"

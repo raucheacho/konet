@@ -61,7 +61,9 @@ defmodule KonetWeb.RoomChannelTest do
       assert {:ok, _, _socket} = subscribe_and_join(socket, "room:user-42:inbox")
 
       socket2 = connect_with(%{"sub" => "ns", "channels" => ["room:user-42:*"]})
-      assert {:error, %{reason: "unauthorized"}} = subscribe_and_join(socket2, "room:user-43:inbox")
+
+      assert {:error, %{reason: "unauthorized"}} =
+               subscribe_and_join(socket2, "room:user-43:inbox")
     end
   end
 
@@ -95,7 +97,6 @@ defmodule KonetWeb.RoomChannelTest do
       ref = push(socket, "broadcast", %{"missing" => "event and payload"})
       assert_reply ref, :error, %{reason: "unsupported_event"}
     end
-
   end
 
   describe "floor control" do

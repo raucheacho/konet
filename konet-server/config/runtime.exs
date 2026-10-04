@@ -73,7 +73,7 @@ if config_env() == :prod do
   config :konet,
     # Same list the socket's check_origin uses, so the REST API and the
     # WebSocket agree on who may call them. `false` here means "*".
-    allowed_origins: (if is_list(allowed_origins), do: allowed_origins, else: nil),
+    allowed_origins: if(is_list(allowed_origins), do: allowed_origins, else: nil),
     secret_file: secret_file,
     jwt_secret: jwt_secret,
     anon_key: System.get_env("KONET_ANON_KEY"),
