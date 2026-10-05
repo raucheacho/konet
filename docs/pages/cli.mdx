@@ -4,8 +4,40 @@ The Konet CLI is a single Go binary that manages the lifecycle of the Konet Serv
 
 ## Installation
 
+macOS and Linux, with Homebrew:
+
 ```bash
 brew install raucheacho/tap/konet
+```
+
+Windows, with Scoop:
+
+```powershell
+scoop bucket add raucheacho https://github.com/raucheacho/scoop-bucket
+scoop install konet
+```
+
+Linux without Homebrew, or a CI image — the install script downloads the
+release archive for your platform, verifies its checksum and installs the
+binary in `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/raucheacho/konet/main/install.sh | sh
+```
+
+| Variable | Purpose |
+|----------|---------|
+| `KONET_INSTALL_DIR` | Where to put the binary (default `~/.local/bin`) |
+| `KONET_VERSION` | Version to install, e.g. `v0.6.0` (default: latest) |
+| `KONET_SKIP_CHECKSUM` | `1` to install without verifying the archive. Without it, an archive that cannot be verified — no checksums file, no entry for it, no sha256 tool — is refused |
+
+The script refuses to run when Homebrew or Scoop already manages `konet`.
+
+Every release archive also carries a build provenance attestation, so you can
+check it was built by this repository's release workflow:
+
+```bash
+gh attestation verify konet_0.6.0_linux_amd64.tar.gz --repo raucheacho/konet
 ```
 
 Or build from source:
@@ -97,15 +129,21 @@ konet keys generate
 
 ### `konet upgrade`
 
-Upgrades the **CLI binary** itself: it checks the latest GitHub release and, if
-you are behind, re-runs the install script. On Windows it prints the release URL
-instead of self-updating.
+Upgrades the **CLI binary** itself, depending on how it was installed:
+
+- **Homebrew or Scoop**: prints `brew upgrade --cask konet` or
+  `scoop update konet` and does nothing else — only that manager should replace
+  its own binary.
+- **Install script or a hand-extracted archive**: checks the latest GitHub
+  release and, if you are behind, re-runs the install script, then pulls
+  `ghcr.io/raucheacho/konet:latest`.
+- **Windows outside Scoop**: prints the release URL instead of self-updating.
 
 ```bash
 konet upgrade
 ```
 
-It does not touch the server image. `konet start` only pulls
+Otherwise the server image is not updated for you: `konet start` only pulls
 `ghcr.io/raucheacho/konet:latest` when no copy is cached locally, so moving the
 server to a newer build is an explicit step:
 

@@ -21,8 +21,11 @@ Konet is a lightweight, self-hosted alternative to managed realtime services. It
 ### Local development (CLI)
 
 ```bash
-# Install the CLI
+# Install the CLI — Homebrew (macOS/Linux)…
 brew install raucheacho/tap/konet
+# …Scoop (Windows): scoop bucket add raucheacho https://github.com/raucheacho/scoop-bucket && scoop install konet
+# …or the install script (verifies the checksum):
+# curl -fsSL https://raw.githubusercontent.com/raucheacho/konet/main/install.sh | sh
 
 # Initialize, generate keys, and start
 konet init

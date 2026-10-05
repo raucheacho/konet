@@ -92,7 +92,7 @@ four times and verified against four separate mocks, so a change to a reply
 shape would have been caught by no test at all.
 
 [`conformance/`](../../conformance/) closes it. One `konet-server`, one scenario,
-run by the JS, Go and Python SDKs — 15 steps each, in CI. It covers the two
+run by the JS, Go and Python SDKs — 22 steps each, in CI. It covers the two
 things no SDK's own tests ever asserted: the `konet:history` payload shape, and
 that the floor is keyed on the `sub` claim rather than on the connection.
 
