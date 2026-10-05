@@ -126,6 +126,14 @@ Binary pushes use refs prefixed `b`. A `phx_reply` arriving with no waiter and
 such a ref is a refusal: `Channel.binaryRefused` emits `"binary_error"`
 `{topic, reason}`, at most once per reason per second (`binaryErrorAt`).
 
+`request()` (`acquireFloor`, `releaseFloor`) rejects with a
+`KonetRequestError`: `reason` and `holder` from the server's refusal, and a
+`message` equal to `reason` — exactly what the plain `Error` it used to throw
+carried, so code comparing or displaying the message is unaffected. The holder
+used to be dropped, although Go and Python have always reported it. React
+Native re-exports it as a type only: a value re-export would fail to load
+against a 0.6.0 core, which `>=0.6.0` allows.
+
 `client.onStatus(handler)` reports each step — `connecting`, `connected`,
 `reconnecting` (with `attempt` and `delayMs`), `disconnected` (explicit
 `disconnect()`), `failed` (attempts used up). Giving up used to be silent. A

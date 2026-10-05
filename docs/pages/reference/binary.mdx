@@ -64,7 +64,7 @@ try {
   await channel.acquireFloor()
   // you may now send binary frames
 } catch (error) {
-  // someone else is talking; the error names them
+  // someone else is talking; error.holder names them
 }
 
 await channel.releaseFloor()

@@ -28,6 +28,11 @@ KONET_HOST=realtime.example.com
 `KONET_SECRET_FILE=/data/jwt_secret`, so a secret rotated from the Studio survives
 restarts. Running the image directly, mount a volume and set it yourself.
 
+To run a build of your own checkout with the compose file, set
+`KONET_IMAGE=konet:dev` and use `docker compose up -d --build`. The image is
+built under that tag instead of overwriting `ghcr.io/raucheacho/konet:latest`,
+which another project on the same machine may be running.
+
 See [Configuration](/server/configuration) for the full list.
 
 ## Coolify

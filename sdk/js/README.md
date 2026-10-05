@@ -108,6 +108,35 @@ document.addEventListener('visibilitychange', () => {
 In React Native, use [`@raucheacho/konet-rn`](../react-native), which wires this
 to `AppState` for you.
 
+## Binary frames
+
+For audio or anything else at a media rate. Each topic runs one of two modes,
+chosen at join; every member of a topic must ask for the same one.
+
+```ts
+// Push-to-talk — "exclusive", the default: one sender at a time, by floor.
+const ptt = client.channel('room:team-42:ptt')
+await ptt.subscribe()
+await ptt.acquireFloor()            // if taken: KonetRequestError, .holder names them
+ptt.sendBinary('a', frame)          // frame: Uint8Array, copied
+await ptt.releaseFloor()
+ptt.on('konet:floor', ({ holder }) => { /* user id, or null when free */ })
+
+// A call — "multiplex": everyone sends at once, no floor.
+const call = client.channel('room:call-7', { binaryMode: 'multiplex' })
+await call.subscribe()
+call.on('a', (data, sender) => { /* sender: who sent this frame */ })
+call.sendBinary('a', frame)
+
+// A refused frame (no floor, rate limited), at most once per reason per second.
+call.on('binary_error', (e) => { /* { topic, reason } */ })
+```
+
+A join asking for the other mode than the topic's members is refused with
+`binary_mode_mismatch`; a multiplex topic beyond the server's member ceiling,
+with `topic_full`. Frames are never echoed to their sender and never buffered
+across a reconnect. Details: [binary frames](https://raucheacho.github.io/konet/reference/binary).
+
 ## Presence
 
 ```ts

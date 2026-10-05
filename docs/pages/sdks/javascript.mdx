@@ -160,7 +160,8 @@ try {
   await channel.acquireFloor()
   channel.sendBinary('a', frame) // frame: Uint8Array
 } catch (error) {
-  // someone else is talking; the error names them
+  // someone else is talking: a KonetRequestError whose reason (and message)
+  // is "floor_held" and whose holder names them
 } finally {
   await channel.releaseFloor()
 }

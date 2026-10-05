@@ -64,6 +64,38 @@ step, capped at 30 s), so clients dropped together do not come back in lockstep.
 
 Decode a payload into a struct with `konet.MarshalPayload(payload, &target)`.
 
+## Binary frames
+
+For audio or anything else at a media rate. Each topic runs one of two modes,
+chosen when the channel is created; every member must ask for the same one.
+
+```go
+// Push-to-talk — BinaryExclusive, the default: one sender at a time, by floor.
+ptt := client.Channel("room:team-42:ptt")
+_ = ptt.Subscribe(ctx)
+holder, err := ptt.AcquireFloor(ctx) // err names the holder if taken
+_ = ptt.SendBinary("a", frame)       // frame is copied
+_ = ptt.ReleaseFloor(ctx)
+ptt.OnBinary("a", func(data []byte) {}) // synchronous, in arrival order
+
+// A call — BinaryMultiplex: everyone sends at once, no floor.
+call := client.Channel("room:call-7", konet.WithBinaryMode(konet.BinaryMultiplex))
+_ = call.Subscribe(ctx)
+call.OnBinaryFrom("a", func(data []byte, sender string) {})
+_ = call.SendBinary("a", frame)
+
+// A refused frame (no floor, rate limited), at most once per reason per second.
+call.On("binary_error", func(p interface{}) {
+    e := p.(konet.BinaryError) // e.Topic, e.Reason
+    _ = e
+})
+```
+
+`call.BinaryMode()` returns the mode the server confirmed. A join asking for the
+other mode than the topic's members fails with `binary_mode_mismatch`; a
+multiplex topic beyond the server's member ceiling, with `topic_full`.
+Details: [binary frames](https://raucheacho.github.io/konet/reference/binary).
+
 ## License
 
 MIT

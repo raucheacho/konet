@@ -135,7 +135,7 @@ flowchart TB
 
 | Dependency | Nature | Where it is declared |
 |---|---|---|
-| `sdk/react-native` → `sdk/js` | `peerDependencies: ">=0.3.0"`, resolved locally via `tsconfig.json` `paths` and the vitest alias | `sdk/react-native/package.json`, `tsconfig.json`, `vitest.config.ts` |
+| `sdk/react-native` → `sdk/js` | `peerDependencies: ">=0.6.0"`, resolved locally via `tsconfig.json` `paths` and the vitest alias | `sdk/react-native/package.json`, `tsconfig.json`, `vitest.config.ts` |
 | `examples/live-room/web` → `sdk/js` | `file:../../../sdk/js` | `examples/live-room/web/package.json` |
 | `examples/live-room/agent` → `sdk/python` | `konet>=0.1.4` (PyPI, or `pip install -e ../../../sdk/python`) | `examples/live-room/agent/pyproject.toml` |
 | `konet-cli` → `konet-server` | Docker image `ghcr.io/raucheacho/konet:latest` + HTTP `/api/*` | `konet-cli/internal/docker/docker.go`, `internal/api/client.go` |

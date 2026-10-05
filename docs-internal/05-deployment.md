@@ -88,6 +88,7 @@ Environment block, grouped by role:
 
 | Key | Value in the file | Notes |
 |---|---|---|
+| `image` | `${KONET_IMAGE:-ghcr.io/raucheacho/konet:latest}` | set `KONET_IMAGE=konet:dev` to `--build` the checkout without overwriting the published tag locally |
 | `MIX_ENV` | `prod` | fixed |
 | `PHX_SERVER` | `"true"` | fixed — without it the release starts no endpoint |
 | `KONET_HOST` | `${KONET_HOST:-localhost}` | public hostname used in generated URLs; set it to your domain |

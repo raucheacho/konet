@@ -1,6 +1,6 @@
 export { KonetClient } from "./client.js";
 export type { ConnectionStatus, KonetClientOptions } from "./client.js";
-export { Channel } from "./channel.js";
+export { Channel, KonetRequestError } from "./channel.js";
 export type {
   BinaryMode,
   ChannelOptions,

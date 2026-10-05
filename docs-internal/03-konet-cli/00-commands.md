@@ -229,9 +229,11 @@ This command was also broken three ways, all fixed:
 2. **The download is checked.** `httpGet` rejects any non-2xx status and
    `downloadScript` rejects a body that does not begin like a shell script.
    Previously only transport errors were caught, so GitHub's 404 HTML page for
-   the (still non-existent) `install.sh` was handed straight to `sh`.
+   the then non-existent `install.sh` was handed straight to `sh`.
 3. **The fallback URLs are valid** (`github.com/raucheacho/konet/releases/latest`).
 
-⚠️ `install.sh` still does not exist in this repo, so the auto-update path always
-takes the fallback. That is now a clear message instead of an executed error
-page, but adding the script — or dropping the command — is still open.
+`install.sh` is at the repository root and on `main`, so the self-update path
+works: it verifies the archive's checksum (refusing to install when it cannot,
+unless `KONET_SKIP_CHECKSUM=1`), and after a successful update `upgrade` also
+pulls `ghcr.io/raucheacho/konet:latest` (`pullServerImage`). A failed pull is a
+warning, not an error.
