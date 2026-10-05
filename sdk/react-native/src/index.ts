@@ -20,6 +20,7 @@ export type {
   ChannelState,
   KonetSendError,
   KonetBinaryError,
+  KonetRequestError,
   BinaryFrame,
   PresenceMeta,
   PresenceEntry,

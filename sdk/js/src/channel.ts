@@ -45,6 +45,25 @@ const BINARY_REF_PREFIX = "b";
 // Refusals of the same reason closer together than this are reported once.
 const BINARY_ERROR_INTERVAL_MS = 1_000;
 
+/**
+ * The error a refused request — `acquireFloor()`, `releaseFloor()` — rejects
+ * with. `message` is the server's reason, unchanged from before these fields
+ * existed, so code comparing it keeps working.
+ */
+export class KonetRequestError extends Error {
+  /** The server's reason, e.g. `"floor_held"`, `"not_holder"`, `"floor_disabled"`. */
+  readonly reason: string;
+  /** Who holds the floor, when the reason is `"floor_held"`. */
+  readonly holder?: string;
+
+  constructor(reason: string, holder?: string) {
+    super(reason);
+    this.name = "KonetRequestError";
+    this.reason = reason;
+    if (holder !== undefined) this.holder = holder;
+  }
+}
+
 /** Why the server refused a `send()`. */
 export interface KonetSendError {
   topic: string;
@@ -252,8 +271,9 @@ export class Channel {
    * Claim the right to send on this channel. At most one member holds it at a
    * time, so this is how half-duplex media — push-to-talk — is arbitrated.
    *
-   * Resolves with the holder, which is this client on success. Rejects when
-   * someone else already holds it, naming them so the UI can say who. Only in
+   * Resolves with the holder, which is this client on success. Rejects with a
+   * `KonetRequestError` when someone else holds it: `reason` (and `message`) is
+   * "floor_held", and `holder` names them so the UI can say who. Only in
    * `"exclusive"` mode: a `"multiplex"` topic has no floor, and the server
    * refuses with `floor_disabled`.
    */
@@ -285,7 +305,10 @@ export class Channel {
         clearTimeout(timer);
         const reply = payload as { status: string; response: unknown };
         if (reply.status === "ok") resolve(reply.response);
-        else reject(new Error((reply.response as { reason?: string })?.reason ?? "refusé"));
+        else {
+          const refusal = reply.response as { reason?: string; holder?: string } | null;
+          reject(new KonetRequestError(refusal?.reason ?? "refusé", refusal?.holder));
+        }
       });
 
       this.sendFn({ joinRef: this.joinRef, ref, topic: this.topic, event, payload });

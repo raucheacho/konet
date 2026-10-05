@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KonetClient, reconnectDelay } from "../client.js";
 import type { ConnectionStatus } from "../client.js";
+import { KonetRequestError } from "../channel.js";
 import type { KonetSendError } from "../channel.js";
 import { MockWebSocket, replyTo, WireFrame } from "./mock-socket.js";
 
@@ -550,6 +551,37 @@ describe("binary refusals", () => {
     // A late reply to a text send is not a binary refusal.
     socket.serverSend([null, "14", TOPIC, "phx_reply", { status: "error", response: { reason: "x" } }]);
     expect(errors).toHaveLength(3);
+    client.disconnect();
+  });
+});
+
+describe("floor refusals", () => {
+  it("names the holder, and keeps the reason as the message", async () => {
+    const { client, socket, channel } = await connectAndJoin();
+
+    const pending = channel.acquireFloor();
+    const push = socket.lastFrameOf("konet:floor_acquire")!;
+    replyTo(socket, push, "error", { reason: "floor_held", holder: "alice" });
+
+    const error = (await pending.catch((e) => e)) as KonetRequestError;
+    expect(error).toBeInstanceOf(KonetRequestError);
+    expect(error).toBeInstanceOf(Error);
+    // Unchanged, so code that compares or displays the message keeps working.
+    expect(error.message).toBe("floor_held");
+    expect(error.reason).toBe("floor_held");
+    expect(error.holder).toBe("alice");
+    client.disconnect();
+  });
+
+  it("leaves holder unset when the refusal names nobody", async () => {
+    const { client, socket, channel } = await connectAndJoin();
+
+    const pending = channel.releaseFloor();
+    replyTo(socket, socket.lastFrameOf("konet:floor_release")!, "error", { reason: "not_holder" });
+
+    const error = (await pending.catch((e) => e)) as KonetRequestError;
+    expect(error.reason).toBe("not_holder");
+    expect(error.holder).toBeUndefined();
     client.disconnect();
   });
 });

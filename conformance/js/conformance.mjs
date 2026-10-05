@@ -118,7 +118,12 @@ async function main() {
     await chB.acquireFloor();
     fail(8, "second holder refused", "the second acquire succeeded");
   } catch (err) {
-    check(8, "second holder refused", /floor_held|held/i.test(err.message), err.message);
+    check(
+      8,
+      "second holder refused",
+      err.reason === "floor_held" && typeof err.holder === "string" && err.holder.length > 0,
+      `reason=${err.reason} holder=${err.holder} message=${err.message}`
+    );
   }
 
   // 9/10 — binary reaches B but must not echo to A
