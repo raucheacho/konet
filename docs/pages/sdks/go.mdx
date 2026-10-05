@@ -44,6 +44,10 @@ func main() {
 }
 ```
 
+`Connect`'s context bounds the handshake only: the connection then lives until
+`Disconnect`, so connecting from an HTTP handler with the request's context is
+safe — the socket outlives the request. Call `Disconnect` to end it.
+
 ## API
 
 ```go
@@ -59,8 +63,8 @@ c := konet.New(url, token, konet.ClientOptions{
     // Runs on the client's goroutine — return quickly.
     OnStatus: func(s konet.Status) {},
 })
-err := c.Connect(ctx)
-c.Disconnect()
+err := c.Connect(ctx)  // ctx bounds the handshake only
+c.Disconnect()         // ends the connection
 
 // Channel
 ch := c.Channel("room:lobby")

@@ -230,3 +230,16 @@ the newest toolchain.
 in `replies` and a `b` ref goes to `binaryRefused`, which emits `"binary_error"`
 to `On` handlers with a `BinaryError{Topic, Reason}` payload — at most once per
 reason per second (`binaryErrorAt`, under `Channel.mu`).
+
+## Connection lifetime
+
+`Connect(ctx)` uses `ctx` for the dial only. The read loop, the heartbeat loop
+and every reconnect run on a context the client owns —
+`context.WithCancel(context.WithoutCancel(ctx))`, so `ctx`'s values survive but
+its cancellation and deadline do not — cancelled by `Disconnect` through
+`Client.stop`. It used to be `ctx` itself: `conn.Read(ctx)` closes the
+connection when `ctx` ends, and `reconnect` gave up on the same `ctx.Done()`, so
+a client connected with a request's context went silent when the request
+returned. Found by a recorder that connected from an HTTP handler and received
+nothing. Pinned by `TestConnectContextBoundsOnlyTheHandshake` and
+`TestDisconnectEndsTheConnectionEvenWithALiveContext`.

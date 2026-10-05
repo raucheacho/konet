@@ -45,6 +45,10 @@ func main() {
 }
 ```
 
+`Connect`'s context bounds the handshake only: the connection then lives until
+`Disconnect`, so connecting from an HTTP handler with the request's context is
+safe — the socket outlives the request. Call `Disconnect` to end it.
+
 ## Options
 
 ```go

@@ -722,3 +722,58 @@ func TestBinaryRefusalsAreReportedOncePerReasonPerSecond(t *testing.T) {
 		t.Fatal("not reported after the window")
 	}
 }
+
+// ── Connection lifetime ────────────────────────────────────────────────────
+
+// Connect's context bounds the handshake, not the connection. It used to be
+// handed to the read and heartbeat loops and to every reconnect, so connecting
+// with a request's context closed the socket when the request ended — a
+// recorder connected from an HTTP handler received nothing afterwards.
+func TestConnectContextBoundsOnlyTheHandshake(t *testing.T) {
+	server := newFakeServer(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client := New(server.wsURL(), "tok", testOptions())
+	if err := client.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer client.Disconnect()
+
+	cancel() // the request that connected is over
+	time.Sleep(100 * time.Millisecond)
+
+	if !client.Connected() {
+		t.Fatal("cancelling Connect's context closed the connection")
+	}
+
+	// And the socket still works: a join needs the read loop to deliver its reply.
+	joinCtx, cancelJoin := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelJoin()
+	if err := client.Channel("room:after-cancel").Subscribe(joinCtx); err != nil {
+		t.Fatalf("join after the connect context ended: %v", err)
+	}
+
+	conns, _, _ := server.snapshot()
+	if conns != 1 {
+		t.Fatalf("expected the original connection to survive, got %d connections", conns)
+	}
+}
+
+// Disconnect is what ends the connection, now that the context does not.
+func TestDisconnectEndsTheConnectionEvenWithALiveContext(t *testing.T) {
+	server := newFakeServer(t)
+	client := New(server.wsURL(), "tok", testOptions())
+	if err := client.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before := runtime.NumGoroutine()
+
+	client.Disconnect()
+
+	waitFor(t, "the client's goroutines to stop", func() bool {
+		return runtime.NumGoroutine() < before
+	})
+	if client.Connected() {
+		t.Fatal("still connected after Disconnect")
+	}
+}

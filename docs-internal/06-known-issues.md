@@ -147,6 +147,7 @@ that test *is* the guard.
 | **Go: an abandoned connection was never closed**, leaking the websocket library's per-connection goroutine. | `reconnect` calls `CloseNow()` on the old conn | same test |
 | **Go: data race on `Channel.state`** — read and written in `reconnect` without the mutex. | all state access under `Channel.mu`; `Joined()` accessor | `go test -race`, now in CI |
 | **Go: `On()` compared handlers with `fmt.Sprintf("%p", h)`** (matches distinct closures sharing a body) and **`OnBinary()` captured a slice index** (shifted by earlier removals). | both use an explicit `id` on `eventSub`/`binarySub` | `::TestUnsubscribeRemovesOnlyItsOwnHandler`, `::TestBinaryUnsubscribeRemovesOnlyItsOwnHandler` |
+| **Go: `Connect(ctx)` tied the whole connection to `ctx`.** The read loop, heartbeat and reconnects all ran on it, and `conn.Read` closes the socket when its context ends — connecting with a request's context cut the socket (and the audio) when the request returned. | `ctx` bounds the dial only; the loops run on a client-owned context (`WithoutCancel(ctx)`, values kept) that `Disconnect` cancels | `client_test.go::TestConnectContextBoundsOnlyTheHandshake`, `::TestDisconnectEndsTheConnectionEvenWithALiveContext` |
 | **Go: no liveness detection** — heartbeat replies skipped with the rest of the `"phoenix"` topic. | `pendingHeartbeat` tracked; an unanswered probe closes the conn so the read loop reconnects | `::TestUnansweredHeartbeatForcesReconnect`, `::TestAnsweredHeartbeatKeepsTheSocket` |
 | **Go: the token was interpolated into the URL unescaped.** | `url.QueryEscape` | — |
 | **Go: `Disconnect` closed `done` under a select/default race.** | `sync.Once` | — |
@@ -243,7 +244,7 @@ that test *is* the guard.
 | Suite | Before | After | Now (binary modes, sender prefix, audit fixes) |
 |---|---|---|---|
 | `konet-server` | 31 | 76 | 115 |
-| `sdk/go` | 8 (binary framing only) | 16 | 28 |
+| `sdk/go` | 8 (binary framing only) | 16 | 30 |
 | `sdk/python` | 12 (binary framing only) | 19 | 31 |
 | `sdk/js` | 26 | 26 | 44 |
 | `sdk/react-native` | 7 | 7 | 7 |
