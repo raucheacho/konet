@@ -35,9 +35,12 @@ type Client struct {
 	pendingHeartbeat string
 
 	refCounter atomic.Uint64
-	done       chan struct{}
-	closeOnce  sync.Once
-	opts       ClientOptions
+	// stop cancels the context the read and heartbeat loops run on. That
+	// context belongs to the client, not to the caller of Connect: see Connect.
+	stop      context.CancelFunc
+	done      chan struct{}
+	closeOnce sync.Once
+	opts      ClientOptions
 }
 
 // ClientOptions configures the client behavior.
@@ -148,6 +151,13 @@ func (c *Client) dial(ctx context.Context) (*websocket.Conn, error) {
 }
 
 // Connect opens the WebSocket connection and starts the read loop.
+//
+// ctx bounds the handshake only. The connection then lives — reading,
+// heartbeating, reconnecting — until Disconnect, whatever happens to ctx: it
+// used to be handed to those loops too, so connecting with a request's context
+// closed the socket when the request ended, and a listener connected from an
+// HTTP handler received nothing afterwards. ctx's values (tracing and the
+// like) are kept; only its cancellation and deadline are dropped.
 func (c *Client) Connect(ctx context.Context) error {
 	c.emitStatus(Status{State: StatusConnecting})
 	conn, err := c.dial(ctx)
@@ -164,8 +174,12 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Unlock()
 
 	if spawn {
-		go c.readLoop(ctx)
-		go c.heartbeatLoop(ctx)
+		life, stop := context.WithCancel(context.WithoutCancel(ctx))
+		c.mu.Lock()
+		c.stop = stop
+		c.mu.Unlock()
+		go c.readLoop(life)
+		go c.heartbeatLoop(life)
 	}
 	return nil
 }
@@ -185,8 +199,14 @@ func (c *Client) Disconnect() {
 	conn := c.conn
 	c.conn = nil
 	c.started = false
+	stop := c.stop
+	c.stop = nil
 	channels := c.channelList()
 	c.mu.Unlock()
+
+	if stop != nil {
+		stop()
+	}
 
 	for _, ch := range channels {
 		ch.socketClosed()
